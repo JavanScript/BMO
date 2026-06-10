@@ -73,11 +73,23 @@ docker pull python:3.12-slim
 docker compose up --build bmo-web
 ```
 
-If Docker Hub is slow or blocked on your network, set `BMO_PYTHON_IMAGE` in `.env` to a mirror that can serve the same Python image, then rebuild:
+If that fails while fetching a token from `auth.docker.io`, Docker Hub is slow or blocked on your network. Use a registry that mirrors the official Python image without contacting Docker Hub:
+
+```sh
+BMO_PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim docker compose up --build bmo-web
+```
+
+Another mirror to try:
 
 ```sh
 BMO_PYTHON_IMAGE=mirror.gcr.io/library/python:3.12-slim
 docker compose up --build bmo-web
+```
+
+You can also put the working image in `.env`:
+
+```sh
+BMO_PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
 ```
 
 ## Local Browser Test
