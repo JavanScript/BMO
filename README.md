@@ -6,7 +6,7 @@ BMO is a Dockerized Matrix game bot. Matrix is the lobby and social layer; the a
 
 - `bmo-plugin/` is the maubot plugin. It handles Matrix commands, lobby messages, ready reactions, and launching games.
 - `bmo-web/` is the browser game server. It creates sessions, serves game pages, owns game state, persists sessions to SQLite, and streams live updates to browsers.
-- `docker-compose.yml` runs maubot and the BMO web service together.
+- `docker-compose.yml` runs the BMO web service for local browser testing. Maubot can run separately on the server, with the BMO plugin installed into that maubot instance.
 
 The first vertical slice is browser Wordle. The Matrix room creates the lobby, players mark themselves ready with a reaction, then the bot posts signed browser links for the ready players.
 
@@ -38,7 +38,7 @@ sudo docker run hello-world
 docker compose version
 ```
 
-If `docker` requires `sudo`, you can either keep using `sudo docker ...` or explicitly add your user to the `docker` group. That group effectively grants root-level host access to Docker users, so only do this on machines where you trust your user account:
+If `docker info` shows the client but says it cannot connect to `/var/run/docker.sock`, the Docker daemon is installed but your shell cannot access it. You can either keep using `sudo docker ...` / `sudo docker compose ...`, or explicitly add your user to the `docker` group. That group effectively grants root-level host access to Docker users, so only do this on machines where you trust your user account:
 
 ```sh
 sudo usermod -aG docker "$USER"
@@ -52,15 +52,52 @@ Copy the example environment file and edit secrets/URLs:
 cp .env.example .env
 ```
 
-Start the services:
+Start the browser game server:
 
 ```sh
-docker compose up --build
+docker compose up --build bmo-web
 ```
 
-Maubot will be reachable on port `29316` and BMO web on port `8000` unless you put them behind your reverse proxy. BMO web stores SQLite data under `./data/bmo-web`.
+If your shell needs sudo for Docker:
 
-The maubot Docker image stores its runtime config in `./data/maubot`. On first run, maubot creates its base config there. Configure the Matrix client and management UI as usual, then upload the BMO plugin bundle.
+```sh
+sudo docker compose up --build bmo-web
+```
+
+BMO web will be reachable on `http://localhost:8000`. It stores SQLite data under `./data/bmo-web`.
+
+If Docker times out while pulling `python:3.12-slim`, the issue is the registry pull, not the BMO build. Try pre-pulling the base image first:
+
+```sh
+docker pull python:3.12-slim
+docker compose up --build bmo-web
+```
+
+If Docker Hub is slow or blocked on your network, set `BMO_PYTHON_IMAGE` in `.env` to a mirror that can serve the same Python image, then rebuild:
+
+```sh
+BMO_PYTHON_IMAGE=mirror.gcr.io/library/python:3.12-slim
+docker compose up --build bmo-web
+```
+
+## Local Browser Test
+
+With `bmo-web` running, create a local Wordle session:
+
+```sh
+curl -sS -X POST http://localhost:8000/api/sessions \
+  -H 'Content-Type: application/json' \
+  -H 'X-BMO-Secret: change-me' \
+  -d '{
+    "game": "wordle",
+    "lobby_id": "local-lobby",
+    "room_id": "!local:localhost",
+    "players": ["@alice:localhost", "@bob:localhost"],
+    "public_base_url": "http://localhost:8000"
+  }'
+```
+
+The response includes `player_links`. Open one of those URLs in your browser. Each link is signed for a specific Matrix player, so the plain `/game/<session-id>` URL will load but will ask for a signed player link before allowing play.
 
 ## Plugin Build
 
@@ -89,6 +126,8 @@ min_players:
 ```
 
 `shared_secret` must match `BMO_SHARED_SECRET`. The web service uses it to authorize maubot session creation and sign per-player browser links.
+
+If maubot runs outside this Compose project on the same Docker host, set `bmo_web_url` to whatever address that maubot process can use to reach BMO web. For a host-level maubot process, that is usually `http://localhost:8000`. For maubot in another Docker network, publish BMO web through your reverse proxy or attach both services to a shared Docker network.
 
 ## Game Server Model
 
