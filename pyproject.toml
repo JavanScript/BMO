@@ -1,0 +1,13 @@
+[project]
+name = "bmo-maubot"
+version = "0.1.0"
+description = "A Dockerized Matrix game bot with a maubot lobby plugin and browser game server."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 92

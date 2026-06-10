@@ -1,0 +1,8 @@
+command_prefix: bmo
+ready_reaction: "ready"
+bmo_web_url: "http://bmo-web:8000"
+public_game_url: "http://localhost:8000"
+shared_secret: "change-me"
+min_players:
+  wordle: 1
+

@@ -1,0 +1,35 @@
+services:
+  maubot:
+    image: dock.mau.dev/maubot/maubot:latest
+    restart: unless-stopped
+    ports:
+      - "29316:29316"
+    volumes:
+      - ./data/maubot:/data
+      - ./bmo-plugin:/plugins-src/bmo-plugin:ro
+    depends_on:
+      - bmo-web
+
+  bmo-web:
+    build:
+      context: .
+      dockerfile: bmo-web/Dockerfile
+    restart: unless-stopped
+    environment:
+      BMO_SHARED_SECRET: ${BMO_SHARED_SECRET:-change-me}
+      BMO_PUBLIC_BASE_URL: ${BMO_PUBLIC_BASE_URL:-http://localhost:8000}
+      BMO_DB_PATH: /data/bmo-web.sqlite3
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/bmo-web:/data
+
+  bmo-plugin-build:
+    image: dock.mau.dev/maubot/maubot:latest
+    profiles:
+      - tools
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mkdir -p /workspace/dist && mbc build /workspace/bmo-plugin -o /workspace/dist/dev.bmo.games.mbp"]
+    volumes:
+      - ./:/workspace
