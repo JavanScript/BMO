@@ -145,18 +145,18 @@ class SessionStore:
         action: str,
         payload: JsonDict,
     ) -> ActionResult:
-        session = self.get(session_id)
-        if not session:
-            raise LookupError("session not found")
-        self.require_player(session, player_id, token)
-
-        reply = session.game.handle_action(
-            player_id=player_id,
-            action=action,
-            payload=payload,
-        )
-        session.updated_at = _now()
         with self._lock, self._db:
+            session = self.get(session_id)
+            if not session:
+                raise LookupError("session not found")
+            self.require_player(session, player_id, token)
+
+            reply = session.game.handle_action(
+                player_id=player_id,
+                action=action,
+                payload=payload,
+            )
+            session.updated_at = _now()
             self._db.execute(
                 """
                 UPDATE sessions

@@ -9,8 +9,13 @@ from mautrix.types import EventType
 from mautrix.util.config import BaseProxyConfig
 
 from .config import Config
+from .link_delivery import (
+    private_player_message,
+    public_launch_message,
+    requires_private_player_links,
+)
 from .lobby import LobbyManager, reaction_from_event
-from .web_client import BmoWebClient, WebSessionError
+from .web_client import BmoWebClient, PlayerLink, WebSessionError
 
 
 GAME_DESCRIPTIONS = {
@@ -193,7 +198,11 @@ class BMO(Plugin):
             ), allow_html=True)
             return
         if not lobby.can_launch:
-            await self._edit_html(lobby.room_id, lobby.message_id, self.lobbies.render_lobby(lobby))
+            await self._edit_html(
+                lobby.room_id,
+                lobby.message_id,
+                self.lobbies.render_lobby(lobby),
+            )
             await evt.reply(self._format_html(
                 f"🛑 Not enough players ready yet."
             ), allow_html=True)
@@ -214,6 +223,21 @@ class BMO(Plugin):
             return
 
         self.lobbies.remove_for_room(evt.room_id)
+        if requires_private_player_links(lobby.game_key):
+            failed = await self._send_private_player_links(
+                game_key=lobby.game_key,
+                player_links=session.player_links,
+            )
+            await evt.reply(
+                public_launch_message(
+                    game_key=lobby.game_key,
+                    session_url=session.url,
+                    private_links_sent=True,
+                    failed_player_ids=failed,
+                )
+            )
+            return
+
         links = "\n".join(
             f"• [{link.player_id}]({link.url})"
             for link in session.player_links
@@ -223,6 +247,29 @@ class BMO(Plugin):
             f"Tap your link to open your game session.\n\n"
             f"{links}"
         ), allow_html=True)
+
+    async def _send_private_player_links(
+        self,
+        *,
+        game_key: str,
+        player_links: tuple[PlayerLink, ...],
+    ) -> list[str]:
+        failed: list[str] = []
+        for link in player_links:
+            try:
+                room_id = await self.client.create_room(
+                    is_direct=True,
+                    invitees=[link.player_id],
+                    name="BMO Game",
+                )
+                await self.client.send_text(
+                    room_id,
+                    private_player_message(game_key, link.url),
+                )
+            except Exception:
+                self.log.exception("Failed to send private game link to %s", link.player_id)
+                failed.append(link.player_id)
+        return failed
 
     @bmo.subcommand("status", help="Show active lobby status")
     async def status_command(self, evt: MessageEvent) -> None:
@@ -269,7 +316,11 @@ class BMO(Plugin):
             return
 
         self._reaction_map[str(evt.event_id)] = (lobby.room_id, reaction.sender)
-        await self._edit_html(lobby.room_id, lobby.message_id, self.lobbies.render_lobby(lobby))
+        await self._edit_html(
+            lobby.room_id,
+            lobby.message_id,
+            self.lobbies.render_lobby(lobby),
+        )
 
     @event.on(REDACTION_EVENT)
     async def handle_redaction(self, evt) -> None:
@@ -289,4 +340,8 @@ class BMO(Plugin):
         if not lobby:
             return
 
-        await self._edit_html(lobby.room_id, lobby.message_id, self.lobbies.render_lobby(lobby))
+        await self._edit_html(
+            lobby.room_id,
+            lobby.message_id,
+            self.lobbies.render_lobby(lobby),
+        )

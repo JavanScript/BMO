@@ -128,6 +128,8 @@ class HokmPlayTest(unittest.TestCase):
         self.assertEqual(game.last_hand["result"], "normal")
         self.assertEqual(game.hakem, PLAYERS[0])
         self.assertEqual(game.phase, "choose_trump")
+        self.assertIsNotNone(game.last_trick)
+        self.assertEqual(game.last_trick["winner"], PLAYERS[0])
 
     def test_hakem_koti_scores_three_and_advances_hakem_right(self) -> None:
         game = make_play_game()

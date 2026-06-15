@@ -8,7 +8,7 @@ BMO is a Dockerized Matrix game bot. Matrix is the lobby and social layer; the a
 - `bmo-web/` is the browser game server. It creates sessions, serves game pages, owns game state, persists sessions to SQLite, and streams live updates to browsers.
 - `docker-compose.yml` runs the BMO web service for local browser testing. Maubot can run separately on the server, with the BMO plugin installed into that maubot instance.
 
-BMO currently includes browser Wordle and standard four-player Hokm / حکم. The Matrix room creates the lobby, players mark themselves ready with a reaction, then the bot posts signed browser links for the ready players.
+BMO currently includes browser Wordle and standard four-player Hokm / حکم. The Matrix room creates the lobby, players mark themselves ready with a reaction, then the bot launches browser game links for the ready players. Games with private hands, like Hokm, send signed player links privately instead of posting them in the room.
 
 ## Matrix Flow
 
@@ -18,13 +18,13 @@ Commands are grouped under `!bmo`:
 - `!bmo games` - list games
 - `!bmo start wordle` - create a room lobby
 - `!bmo start hokm` - create a four-player Hokm / حکم lobby
-- `!bmo launch` - launch the active lobby and post the game URL
+- `!bmo launch` - launch the active lobby and share the game URL
 - `!bmo status` - show ready count
 - `!bmo cancel` - cancel the lobby
 
 The default ready reaction is `👍`. The bot seeds that reaction under the lobby message, so players can tap it to join/ready up. You can change `ready_reaction` in the maubot plugin config to any Matrix reaction key you prefer.
 
-Hokm uses exactly four Matrix players. Extra ready reactions are ignored once the table has four players.
+Hokm uses exactly four Matrix players. Extra ready reactions are ignored once the table has four players. The room only receives the unsigned game URL; each player gets their signed Hokm link in a private Matrix room.
 
 ## Docker
 

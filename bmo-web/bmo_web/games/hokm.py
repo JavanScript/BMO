@@ -318,13 +318,19 @@ class HokmGame:
             return None
         return self.current_trick[0].card.suit
 
-    def _start_hand(self, *, deck: list[Card] | None = None) -> None:
+    def _start_hand(
+        self,
+        *,
+        deck: list[Card] | None = None,
+        keep_last_trick: bool = False,
+    ) -> None:
         self.hand_number += 1
         self.phase = "choose_trump"
         self.trump_suit = None
         self.current_turn = self.hakem
         self.current_trick = []
-        self.last_trick = None
+        if not keep_last_trick:
+            self.last_trick = None
         self.hand_tricks = {0: 0, 1: 0}
         self.hands = {player: [] for player in self.players}
         self.undealt = list(deck or _shuffled_deck())
@@ -364,7 +370,7 @@ class HokmGame:
 
         if winning_team != hakem_team:
             self._advance_hakem()
-        self._start_hand()
+        self._start_hand(keep_last_trick=True)
         return GameReply(
             f"Team {winning_team + 1} wins the hand for {points} point(s). "
             f"Next Hâkem / حاکم: {self.hakem}."

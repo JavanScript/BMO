@@ -1037,6 +1037,11 @@ def _hokm_html(session_id: str) -> str:
       color: #c9d7ea;
       min-width: 0;
     }
+    .play.winner {
+      border-style: solid;
+      border-color: #f0b84d;
+      box-shadow: 0 0 0 1px rgba(240, 184, 77, .25);
+    }
     .play .name {
       min-width: 0;
       overflow: hidden;
@@ -1539,7 +1544,7 @@ def _hokm_html(session_id: str) -> str:
       renderTeams(data.teams || []);
       renderMeta(data);
       renderTrumpControls(data);
-      renderTrick(data, data.current_trick || []);
+      renderTrick(data);
       renderHand(data.hand || [], new Set(data.playable_card_ids || []));
       renderLastHand(data.last_hand);
     }
@@ -1640,13 +1645,23 @@ def _hokm_html(session_id: str) -> str:
       }
     }
 
-    function renderTrick(data, plays) {
+    function visibleTrick(data) {
+      const current = data.current_trick || [];
+      if (current.length) {
+        return { plays: current, winner: "" };
+      }
+      const last = data.last_trick || {};
+      return { plays: last.cards || [], winner: last.winner || "" };
+    }
+
+    function renderTrick(data) {
+      const { plays, winner } = visibleTrick(data);
       const byPlayer = new Map(plays.map((play) => [play.player_id, play]));
       const positions = positionedSeats(data);
       const cells = ["top", "right", "bottom", "left"].map((position) => {
         const player = positions[position];
         const play = byPlayer.get(player);
-        const cell = node("div", "play");
+        const cell = node("div", `play${player === winner ? " winner" : ""}`);
         cell.append(node("span", "name", shortName(player)));
         if (play) {
           cell.append(node("div", `mini-card ${play.card.color}`, play.card.label));
