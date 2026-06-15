@@ -18,7 +18,7 @@ class Lobby:
 
     @property
     def players(self) -> list[str]:
-        return sorted({self.host_id, *self.ready_users})
+        return sorted(self.ready_users)
 
     @property
     def ready_count(self) -> int:
@@ -70,7 +70,7 @@ class LobbyManager:
             message_id=message_id,
             min_players=max(1, min_players),
             max_players=max_players,
-            ready_users={host_id},
+            ready_users=set(),
         )
         self._by_room[room_id] = lobby
         self._by_message[message_id] = lobby
@@ -95,6 +95,13 @@ class LobbyManager:
         lobby.ready_users.add(reaction.sender)
         return lobby
 
+    def mark_unready(self, room_id: str, user_id: str) -> Lobby | None:
+        lobby = self._by_room.get(room_id)
+        if not lobby:
+            return None
+        lobby.ready_users.discard(user_id)
+        return lobby
+
     def remove_for_room(self, room_id: str) -> Lobby | None:
         lobby = self._by_room.pop(room_id, None)
         if lobby:
@@ -111,29 +118,32 @@ class LobbyManager:
     ) -> str:
         target = _ready_target(min_players=min_players, max_players=max_players)
         return (
-            f"BMO lobby: {game_key}\n"
-            f"Host: {host_id}\n"
-            f"Ready: 1/{target}\n"
-            "Players:\n"
-            f"- {host_id}\n"
-            f"Tap {self.ready_reaction} under this message to join/ready up.\n"
-            "The host can launch with !bmo launch."
+            f"🎮 **BMO lobby: {game_key}**\n"
+            f"Host: **{host_id}**\n"
+            f"Ready: 0/{target}\n"
+            f"\n"
+            f"Tap {self.ready_reaction} under this message to ready up.\n"
+            "The host can launch with **!bmo launch**."
         )
 
     def render_lobby(self, lobby: Lobby) -> str:
-        players = "\n".join(f"- {player}" for player in lobby.players)
         target = _ready_target(
             min_players=lobby.min_players,
             max_players=lobby.max_players,
         )
+        players_section = (
+            "\n## Players\n" + "\n".join(f"• **{p}** ✅" for p in lobby.players) + "\n"
+            if lobby.players
+            else ""
+        )
         return (
-            f"BMO lobby: {lobby.game_key}\n"
-            f"Host: {lobby.host_id}\n"
+            f"🎮 **BMO lobby: {lobby.game_key}**\n"
+            f"Host: **{lobby.host_id}**\n"
             f"Ready: {lobby.ready_count}/{target}\n"
-            "Players:\n"
-            f"{players}\n"
-            f"Tap {self.ready_reaction} under the lobby message to join/ready up.\n"
-            "The host can launch with !bmo launch."
+            f"{players_section}"
+            f"\n"
+            f"Tap {self.ready_reaction} under this message to ready up.\n"
+            "The host can launch with **!bmo launch**."
         )
 
 

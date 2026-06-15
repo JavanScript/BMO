@@ -55,8 +55,8 @@ class LobbyManagerTest(unittest.TestCase):
         )
 
         self.assertIs(updated, lobby)
-        self.assertTrue(lobby.can_launch)
-        self.assertEqual(lobby.players, ["@ada:example.org", "@host:example.org"])
+        self.assertFalse(lobby.can_launch)
+        self.assertEqual(lobby.players, ["@ada:example.org"])
 
     def test_duplicate_ready_reaction_is_ignored(self) -> None:
         manager = LobbyManager(ready_reaction="👍")
@@ -98,9 +98,11 @@ class LobbyManagerTest(unittest.TestCase):
 
         text = manager.render_lobby(lobby)
 
-        self.assertIn("Host: @host:example.org", text)
-        self.assertIn("Ready: 2/2", text)
+        self.assertIn("Host: **@host:example.org**", text)
+        self.assertIn("Ready: 1/2", text)
         self.assertIn("@ada:example.org", text)
+        self.assertIn("• **", text)
+        self.assertIn("✅", text)
         self.assertIn("Tap 👍", text)
 
     def test_lobby_with_max_players_launches_only_when_full(self) -> None:
@@ -115,7 +117,12 @@ class LobbyManagerTest(unittest.TestCase):
         )
 
         self.assertFalse(lobby.can_launch)
-        for player in ("@a:example.org", "@b:example.org", "@c:example.org"):
+        for player in (
+            "@host:example.org",
+            "@a:example.org",
+            "@b:example.org",
+            "@c:example.org",
+        ):
             manager.mark_ready(_reaction(player))
 
         self.assertTrue(lobby.can_launch)
@@ -133,16 +140,18 @@ class LobbyManagerTest(unittest.TestCase):
         )
 
         for player in (
+            "@host:example.org",
             "@a:example.org",
             "@b:example.org",
             "@c:example.org",
-            "@extra:example.org",
         ):
             manager.mark_ready(_reaction(player))
 
+        manager.mark_ready(_reaction("@extra:example.org"))
+
         self.assertEqual(lobby.ready_count, 4)
         self.assertNotIn("@extra:example.org", lobby.players)
-        self.assertIn("Ready: 4/4", manager.render_lobby(lobby))
+        self.assertIn("4/4", manager.render_lobby(lobby))
 
 def _reaction(sender: str):
     return reaction_from_event(
