@@ -1,5 +1,6 @@
 services:
   bmo-web:
+    user: "${BMO_UID:-1000}:${BMO_GID:-1000}"
     build:
       context: .
       dockerfile: bmo-web/Dockerfile
@@ -18,6 +19,9 @@ services:
 
   bmo-plugin-build:
     image: dock.mau.dev/maubot/maubot:latest
+    user: "${BMO_UID:-1000}:${BMO_GID:-1000}"
+    environment:
+      HOME: /tmp
     profiles:
       - tools
     entrypoint: ["/bin/sh", "-c"]

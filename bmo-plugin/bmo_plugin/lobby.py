@@ -37,7 +37,7 @@ class Reaction:
 
 
 class LobbyManager:
-    def __init__(self, ready_reaction: str = "ready") -> None:
+    def __init__(self, ready_reaction: str = "👍") -> None:
         self.ready_reaction = ready_reaction
         self._by_room: dict[str, Lobby] = {}
         self._by_message: dict[str, Lobby] = {}
@@ -103,7 +103,7 @@ class LobbyManager:
             f"Ready: 1/{max(1, min_players)}\n"
             "Players:\n"
             f"- {host_id}\n"
-            f"React with {self.ready_reaction!r} to join/ready up.\n"
+            f"Tap {self.ready_reaction} under this message to join/ready up.\n"
             "The host can launch with !bmo launch."
         )
 
@@ -115,7 +115,7 @@ class LobbyManager:
             f"Ready: {lobby.ready_count}/{lobby.min_players}\n"
             "Players:\n"
             f"{players}\n"
-            f"React with {self.ready_reaction!r} to join/ready up.\n"
+            f"Tap {self.ready_reaction} under the lobby message to join/ready up.\n"
             "The host can launch with !bmo launch."
         )
 

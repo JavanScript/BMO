@@ -91,6 +91,11 @@ class BMO(Plugin):
             message_id=str(message_id),
             min_players=min_players,
         )
+        await self.client.react(
+            evt.room_id,
+            message_id,
+            self.config["ready_reaction"],
+        )
 
     @bmo.subcommand("launch", help="Launch the active lobby")
     async def launch_command(self, evt: MessageEvent) -> None:

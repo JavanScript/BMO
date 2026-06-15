@@ -8,3 +8,5 @@ build/
 *.mbp
 data/
 .env
+config.yaml
+maubot.db

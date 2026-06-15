@@ -21,7 +21,7 @@ Commands are grouped under `!bmo`:
 - `!bmo status` - show ready count
 - `!bmo cancel` - cancel the lobby
 
-The default ready reaction key is `ready` to keep local config ASCII-only. Change `ready_reaction` in the maubot plugin config to an emoji or any Matrix reaction key you prefer.
+The default ready reaction is `👍`. The bot seeds that reaction under the lobby message, so players can tap it to join/ready up. You can change `ready_reaction` in the maubot plugin config to any Matrix reaction key you prefer.
 
 ## Docker
 
@@ -46,10 +46,29 @@ sudo usermod -aG docker "$USER"
 
 Log out and back in before running Docker without `sudo`.
 
+If previous `sudo docker ...` runs created root-owned files in this repo, fix ownership once:
+
+```sh
+sudo chown -R "$USER:$USER" .
+```
+
 Copy the example environment file and edit secrets/URLs:
 
 ```sh
 cp .env.example .env
+```
+
+Set the UID/GID values in `.env` to your user so containers write files as you instead of root:
+
+```sh
+BMO_UID=$(id -u)
+BMO_GID=$(id -g)
+```
+
+You can write those values into `.env` with:
+
+```sh
+printf 'BMO_UID=%s\nBMO_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
 ```
 
 Start the browser game server:
@@ -129,7 +148,7 @@ Upload that bundle in the maubot admin UI, then set the plugin config values:
 
 ```yaml
 command_prefix: bmo
-ready_reaction: ready
+ready_reaction: "👍"
 bmo_web_url: http://bmo-web:8000
 public_game_url: https://bmo.example.com
 shared_secret: same-secret-as-BMO_SHARED_SECRET

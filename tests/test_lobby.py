@@ -29,7 +29,7 @@ class LobbyManagerTest(unittest.TestCase):
             )
 
     def test_ready_reaction_marks_player_ready(self) -> None:
-        manager = LobbyManager(ready_reaction="ready")
+        manager = LobbyManager(ready_reaction="👍")
         lobby = manager.create(
             room_id="!room:example.org",
             host_id="@host:example.org",
@@ -47,7 +47,7 @@ class LobbyManagerTest(unittest.TestCase):
                         "m.relates_to": {
                             "rel_type": "m.annotation",
                             "event_id": "$message",
-                            "key": "ready",
+                            "key": "👍",
                         }
                     },
                 )
@@ -59,7 +59,7 @@ class LobbyManagerTest(unittest.TestCase):
         self.assertEqual(lobby.players, ["@ada:example.org", "@host:example.org"])
 
     def test_duplicate_ready_reaction_is_ignored(self) -> None:
-        manager = LobbyManager(ready_reaction="ready")
+        manager = LobbyManager(ready_reaction="👍")
         manager.create(
             room_id="!room:example.org",
             host_id="@host:example.org",
@@ -74,7 +74,7 @@ class LobbyManagerTest(unittest.TestCase):
                 "m.relates_to": {
                     "rel_type": "m.annotation",
                     "event_id": "$message",
-                    "key": "ready",
+                    "key": "👍",
                 }
             },
         )
@@ -86,7 +86,7 @@ class LobbyManagerTest(unittest.TestCase):
         self.assertIsNone(second)
 
     def test_render_lobby_includes_players(self) -> None:
-        manager = LobbyManager(ready_reaction="ready")
+        manager = LobbyManager(ready_reaction="👍")
         lobby = manager.create(
             room_id="!room:example.org",
             host_id="@host:example.org",
@@ -101,6 +101,7 @@ class LobbyManagerTest(unittest.TestCase):
         self.assertIn("Host: @host:example.org", text)
         self.assertIn("Ready: 2/2", text)
         self.assertIn("@ada:example.org", text)
+        self.assertIn("Tap 👍", text)
 
 
 if __name__ == "__main__":
