@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 
@@ -14,6 +15,19 @@ class GameInfo:
     description: str
     min_players: int = 1
     max_players: int | None = None
+    private_player_links: bool = False
+    source: str = "builtin"
+
+    def to_public_dict(self) -> JsonDict:
+        return {
+            "key": self.key,
+            "title": self.title,
+            "description": self.description,
+            "min_players": self.min_players,
+            "max_players": self.max_players,
+            "private_player_links": self.private_player_links,
+            "source": self.source,
+        }
 
 
 @dataclass(frozen=True)
@@ -47,3 +61,11 @@ class GameFactory(Protocol):
 
     def load(self, state: JsonDict) -> Game:
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class GamePlugin:
+    info: GameInfo
+    factory: GameFactory
+    root: Path
+    frontend_path: Path | None = None

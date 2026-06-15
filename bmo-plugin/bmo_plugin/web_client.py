@@ -19,6 +19,28 @@ class CreatedSession:
     player_links: tuple[PlayerLink, ...]
 
 
+@dataclass(frozen=True)
+class GameInfo:
+    key: str
+    title: str
+    description: str
+    min_players: int = 1
+    max_players: int | None = None
+    private_player_links: bool = False
+
+    @classmethod
+    def from_api(cls, data: dict[str, object]) -> "GameInfo":
+        max_players = data.get("max_players")
+        return cls(
+            key=str(data["key"]),
+            title=str(data["title"]),
+            description=str(data.get("description", "")),
+            min_players=int(data.get("min_players", 1)),
+            max_players=None if max_players is None else int(max_players),
+            private_player_links=bool(data.get("private_player_links", False)),
+        )
+
+
 class WebSessionError(RuntimeError):
     pass
 
@@ -70,6 +92,22 @@ class BmoWebClient:
                 PlayerLink(player_id=link["player_id"], url=link["url"])
                 for link in data.get("player_links", [])
             ),
+        )
+
+    async def list_games(self) -> tuple[GameInfo, ...]:
+        try:
+            session = await self._get_session()
+            async with session.get(f"{self.base_url}/api/games") as response:
+                data = await response.json()
+                if response.status >= 400:
+                    raise WebSessionError(data.get("error", f"HTTP {response.status}"))
+        except ClientError as exc:
+            raise WebSessionError(str(exc)) from exc
+
+        return tuple(
+            GameInfo.from_api(game)
+            for game in data.get("games", [])
+            if isinstance(game, dict)
         )
 
     async def _get_session(self) -> ClientSession:

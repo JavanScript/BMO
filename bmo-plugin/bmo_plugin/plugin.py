@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Type
 
 from maubot import MessageEvent, Plugin
@@ -12,23 +13,9 @@ from .config import Config
 from .link_delivery import (
     private_player_message,
     public_launch_message,
-    requires_private_player_links,
 )
 from .lobby import LobbyManager, reaction_from_event
-from .web_client import BmoWebClient, PlayerLink, WebSessionError
-
-
-GAME_DESCRIPTIONS = {
-    "hokm": "Four-player Hokm / حکم partnership table.",
-    "wordle": "Browser Wordle lobby for the room.",
-}
-GAME_MIN_PLAYERS = {
-    "hokm": 4,
-    "wordle": 1,
-}
-GAME_MAX_PLAYERS = {
-    "hokm": 4,
-}
+from .web_client import BmoWebClient, GameInfo, PlayerLink, WebSessionError
 
 REACTION_EVENT = EventType.find("m.reaction", t_class=EventType.Class.MESSAGE)
 REDACTION_EVENT = EventType.ROOM_REDACTION
@@ -39,11 +26,15 @@ class BMO(Plugin):
         self.config.load_and_update()
         self.lobbies = LobbyManager(ready_reaction=self.config["ready_reaction"])
         self._reaction_map: dict[str, tuple[str, str]] = {}
+        self.games: dict[str, GameInfo] = {}
         self.web = BmoWebClient(
             base_url=self.config["bmo_web_url"],
             public_base_url=self.config["public_game_url"],
             shared_secret=self.config["shared_secret"],
         )
+        synced, message = await self._sync_games()
+        if not synced:
+            self.log.warning(message)
 
     async def stop(self) -> None:
         await self.web.close()
@@ -110,27 +101,100 @@ class BMO(Plugin):
     def command_name(self) -> str:
         return self.config["command_prefix"]
 
+    async def _sync_games(self) -> tuple[bool, str]:
+        try:
+            games = await self.web.list_games()
+        except WebSessionError as exc:
+            if self.games:
+                return False, f"Could not sync BMO games; using cached catalog: {exc}"
+            return False, f"Could not sync BMO games: {exc}"
+
+        if not games:
+            if self.games:
+                return False, "BMO web returned no games; using cached catalog."
+            return False, "BMO web returned no games."
+
+        self.games = {
+            game.key: self._apply_game_overrides(game)
+            for game in games
+        }
+        return True, f"Synced {len(self.games)} BMO game(s)."
+
+    def _apply_game_overrides(self, game: GameInfo) -> GameInfo:
+        overrides = self._mapping_config("game_overrides").get(game.key, {})
+        if not isinstance(overrides, dict):
+            overrides = {}
+
+        min_players = max(
+            game.min_players,
+            _optional_int(
+                self._mapping_config("min_players").get(game.key),
+                game.min_players,
+            ),
+        )
+        max_players = _optional_int(overrides.get("max_players"), game.max_players)
+        private_links = _optional_bool(
+            overrides.get("private_player_links"),
+            game.private_player_links,
+        )
+        return replace(
+            game,
+            title=str(overrides.get("title", game.title)),
+            description=str(overrides.get("description", game.description)),
+            min_players=min_players,
+            max_players=max_players,
+            private_player_links=private_links,
+        )
+
+    def _mapping_config(self, key: str) -> dict[str, object]:
+        value = self.config[key]
+        if hasattr(value, "items"):
+            return dict(value.items())
+        return {}
+
     @command.new(name=command_name, help="Show BMO game commands", require_subcommand=False)
     async def bmo(self, evt: MessageEvent) -> None:
+        game_examples = "• **!bmo start <game>** — Create a game lobby"
+        if self.games:
+            examples = ", ".join(f"**{key}**" for key in sorted(self.games))
+            game_examples = (
+                f"• **!bmo start <game>** — Create a game lobby ({examples})"
+            )
         await evt.reply(self._format_html(
             "🎮 **BMO Games**\n"
             "Available commands:\n"
             "• **!bmo games** — List available games\n"
-            "• **!bmo start wordle** — Create a Wordle lobby\n"
-            "• **!bmo start hokm** — Create a Hokm / حکم lobby\n"
+            f"{game_examples}\n"
             "• **!bmo launch** — Launch the active lobby\n"
             "• **!bmo status** — Show lobby status\n"
+            "• **!bmo sync** — Refresh the game catalog\n"
             "• **!bmo cancel** — Cancel the active lobby"
         ), allow_html=True)
 
     @bmo.subcommand("games", help="List available games")
     async def games_command(self, evt: MessageEvent) -> None:
+        synced, message = await self._sync_games()
+        if not self.games:
+            await evt.reply(self._format_html(
+                f"❌ No games are available yet. {message}"
+            ), allow_html=True)
+            return
+
         games = "\n".join(
-            f"• **{key}**: {description}"
-            for key, description in sorted(GAME_DESCRIPTIONS.items())
+            f"• **{game.key}**: {game.description}"
+            for game in sorted(self.games.values(), key=lambda item: item.key)
         )
+        suffix = "" if synced else f"\n\n{message}"
         await evt.reply(self._format_html(
-            f"🎮 **Available Games**\n{games}"
+            f"🎮 **Available Games**\n{games}{suffix}"
+        ), allow_html=True)
+
+    @bmo.subcommand("sync", help="Refresh game metadata from BMO web")
+    async def sync_command(self, evt: MessageEvent) -> None:
+        synced, message = await self._sync_games()
+        prefix = "✅" if synced else "⚠️"
+        await evt.reply(self._format_html(
+            f"{prefix} {message}"
         ), allow_html=True)
 
     @bmo.subcommand("start", help="Create a game lobby")
@@ -139,10 +203,13 @@ class BMO(Plugin):
         game_key = (game_key or "").lower().strip()
         if not game_key:
             await evt.reply(self._format_html(
-                "❌ Pick a game, like **!bmo start wordle** or **!bmo start hokm**."
+                "❌ Pick a game, like **!bmo start wordle**."
             ), allow_html=True)
             return
-        if game_key not in GAME_DESCRIPTIONS:
+        if game_key not in self.games:
+            await self._sync_games()
+        game_info = self.games.get(game_key)
+        if not game_info:
             await evt.reply(self._format_html(
                 f"❌ I do not know **{game_key}**. Try **!bmo games**."
             ), allow_html=True)
@@ -156,11 +223,8 @@ class BMO(Plugin):
             ), allow_html=True)
             return
 
-        min_players = max(
-            int(self.config["min_players"].get(game_key, 1)),
-            GAME_MIN_PLAYERS.get(game_key, 1),
-        )
-        max_players = GAME_MAX_PLAYERS.get(game_key)
+        min_players = game_info.min_players
+        max_players = game_info.max_players
         message_id = await evt.reply(
             self._format_html(self.lobbies.render_new_lobby(
                 game_key=game_key,
@@ -223,7 +287,13 @@ class BMO(Plugin):
             return
 
         self.lobbies.remove_for_room(evt.room_id)
-        if requires_private_player_links(lobby.game_key):
+        game_info = self.games.get(lobby.game_key)
+        private_player_links = (
+            game_info.private_player_links
+            if game_info is not None
+            else False
+        )
+        if private_player_links:
             failed = await self._send_private_player_links(
                 game_key=lobby.game_key,
                 player_links=session.player_links,
@@ -233,6 +303,7 @@ class BMO(Plugin):
                     game_key=lobby.game_key,
                     session_url=session.url,
                     private_links_sent=True,
+                    private_player_links=True,
                     failed_player_ids=failed,
                 )
             )
@@ -345,3 +416,22 @@ class BMO(Plugin):
             lobby.message_id,
             self.lobbies.render_lobby(lobby),
         )
+
+
+def _optional_int(value: object, default: int | None) -> int | None:
+    if value is None or value == "":
+        return default
+    return int(value)
+
+
+def _optional_bool(value: object, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    lowered = str(value).lower().strip()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    return default

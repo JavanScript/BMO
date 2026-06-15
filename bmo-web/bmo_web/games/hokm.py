@@ -91,6 +91,7 @@ class HokmFactory:
         description="Four-player Iranian trick-taking with Hâkem and trump.",
         min_players=PLAYERS_REQUIRED,
         max_players=PLAYERS_REQUIRED,
+        private_player_links=True,
     )
 
     def create(self, players: list[str] | None = None) -> "HokmGame":

@@ -11,4 +11,4 @@ class Config(BaseProxyConfig):
         helper.copy("public_game_url")
         helper.copy("shared_secret")
         helper.copy("min_players")
-
+        helper.copy("game_overrides")

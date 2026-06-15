@@ -38,6 +38,18 @@ class LinkDeliveryTest(unittest.TestCase):
         self.assertIn("token=secret", message)
         self.assertIn("Do not share", message)
 
+    def test_dynamic_private_game_public_message_has_no_player_link(self) -> None:
+        message = public_launch_message(
+            game_key="custom-cards",
+            session_url="https://bmo.example.org/game/session",
+            private_links_sent=True,
+            private_player_links=True,
+        )
+
+        self.assertIn("private Matrix room", message)
+        self.assertNotIn("token=", message)
+        self.assertNotIn("player_id=", message)
+
 
 if __name__ == "__main__":
     unittest.main()

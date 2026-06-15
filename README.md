@@ -20,6 +20,7 @@ Commands are grouped under `!bmo`:
 - `!bmo start hokm` - create a four-player Hokm / حکم lobby
 - `!bmo launch` - launch the active lobby and share the game URL
 - `!bmo status` - show ready count
+- `!bmo sync` - refresh the game list from the web server
 - `!bmo cancel` - cancel the lobby
 
 The default ready reaction is `👍`. The bot seeds that reaction under the lobby message, so players can tap it to join/ready up. You can change `ready_reaction` in the maubot plugin config to any Matrix reaction key you prefer.
@@ -88,6 +89,16 @@ sudo docker compose up --build bmo-web
 
 BMO web will be reachable on `http://localhost:8000`. It stores SQLite data under `./data/bmo-web`.
 
+Optional plugin/admin environment:
+
+```sh
+GAME_PLUGINS_DIR=/data/plugins
+BMO_ENABLE_PLUGIN_UPLOADS=0
+BMO_ADMIN_PASSWORD=change-this-admin-password
+```
+
+`GAME_PLUGINS_DIR` is where extracted game plugins are discovered. Uploads are disabled by default because plugin zips execute trusted Python code in the web server process.
+
 If Docker times out while pulling `python:3.12-slim`, the issue is the registry pull, not the BMO build. Try pre-pulling the base image first:
 
 ```sh
@@ -153,6 +164,12 @@ curl -sS -X POST http://localhost:8000/api/sessions \
   }'
 ```
 
+List available games and metadata:
+
+```sh
+curl -sS http://localhost:8000/api/games
+```
+
 ## Plugin Build
 
 Build the maubot plugin bundle with the helper service:
@@ -178,9 +195,16 @@ shared_secret: same-secret-as-BMO_SHARED_SECRET
 min_players:
   hokm: 4
   wordle: 1
+game_overrides:
+  custom-cards:
+    min_players: 2
+    max_players: 4
+    private_player_links: true
 ```
 
 `shared_secret` must match `BMO_SHARED_SECRET`. The web service uses it to authorize maubot session creation and sign per-player browser links.
+
+On startup and with `!bmo sync`, the maubot plugin calls `GET /api/games` and caches the web server's game list. If the web server is temporarily unreachable, the bot keeps using the last successful game list.
 
 If maubot runs outside this Compose project on the same Docker host, set `bmo_web_url` to whatever address that maubot process can use to reach BMO web. For a host-level maubot process, that is usually `http://localhost:8000`. For maubot in another Docker network, publish BMO web through your reverse proxy or attach both services to a shared Docker network.
 
@@ -196,6 +220,68 @@ Games implement a small contract:
 - `to_state()` for SQLite persistence
 
 The browser currently uses Server-Sent Events from `/api/sessions/<id>/events` so all open players see state changes without refreshing. SSE events are serialized per signed player link, so games with private hands only reveal the current player's cards.
+
+`GET /api/games` exposes the registry metadata used by maubot:
+
+```json
+{
+  "games": [
+    {
+      "key": "wordle",
+      "title": "Wordle",
+      "description": "Guess a five-letter word in six tries.",
+      "min_players": 1,
+      "max_players": null,
+      "private_player_links": false,
+      "source": "builtin"
+    }
+  ]
+}
+```
+
+## Game Plugins
+
+At startup, BMO discovers extracted plugins under `GAME_PLUGINS_DIR`. A plugin directory or uploaded zip uses this shape:
+
+```text
+manifest.yaml
+plugin.py
+frontend/index.html
+```
+
+Example manifest:
+
+```yaml
+key: custom-cards
+title: Custom Cards
+description: Private-card table for Matrix players.
+min_players: 2
+max_players: 4
+private_player_links: true
+frontend: frontend/index.html
+```
+
+`plugin.py` must expose a `factory` object, class, or function with `create(players)` and `load(state)` methods. The resulting game object follows the same contract as built-in games.
+
+Plugin frontends are full HTML files served for signed session URLs. BMO replaces these tokens:
+
+- `__SESSION_JSON__` - JSON string containing the session id
+- `__SESSION_ID__` - raw session id
+- `__GAME_KEY__` - game key
+- `__ASSET_BASE__` - base path for plugin frontend resources, such as `/game/custom-cards/`
+
+Plugin assets are served from `/game/<game-key>/<path>`.
+
+## Admin Panel
+
+Open `/admin/` on the web server to view registered games, recent sessions, plugin load errors, and configuration. Admin API calls accept either:
+
+- `X-BMO-Secret: <BMO_SHARED_SECRET>`
+- `X-BMO-Admin: <ADMIN_PASSWORD or BMO_ADMIN_PASSWORD>`
+
+The admin panel can reload plugins from `GAME_PLUGINS_DIR`. Uploading plugin zips through the panel requires `BMO_ENABLE_PLUGIN_UPLOADS=1`.
+
+Read [docs/plugin-security.md](docs/plugin-security.md) before enabling uploads. BMO validates zip structure and manifests, but plugin Python is trusted code and is not sandboxed.
 
 ## Test
 

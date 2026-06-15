@@ -1,35 +1,100 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from aiohttp import web
 
+from .games.plugins import (
+    MAX_PLUGIN_ZIP_BYTES,
+    PluginValidationError,
+    discover_plugins,
+    install_plugin_zip,
+)
+from .games.registry import GameRegistry
 from .realtime import EventBroker
 from .sessions import GameSession, SessionStore
 
 
-def create_app() -> web.Application:
+STORE_KEY = web.AppKey("store", SessionStore)
+BROKER_KEY = web.AppKey("broker", EventBroker)
+PLUGINS_DIR_KEY = web.AppKey("plugins_dir", Path)
+PLUGIN_ERRORS_KEY = web.AppKey("plugin_errors", list)
+ADMIN_PASSWORD_KEY = web.AppKey("admin_password", object)
+PLUGIN_UPLOADS_ENABLED_KEY = web.AppKey("plugin_uploads_enabled", bool)
+
+
+def create_app(
+    *,
+    store: SessionStore | None = None,
+    plugins_dir: str | Path | None = None,
+    admin_password: str | None = None,
+    enable_plugin_uploads: bool | None = None,
+) -> web.Application:
     app = web.Application()
-    app["store"] = SessionStore(
-        shared_secret=os.environ.get("BMO_SHARED_SECRET", "change-me"),
-        public_base_url=os.environ.get("BMO_PUBLIC_BASE_URL", "http://localhost:8000"),
-        db_path=os.environ.get("BMO_DB_PATH", "data/bmo-web.sqlite3"),
+    plugin_root = Path(plugins_dir or os.environ.get("GAME_PLUGINS_DIR", "plugins"))
+    if store is None:
+        registry = GameRegistry.defaults()
+        plugin_errors = _register_plugins(registry, plugin_root)
+        store = SessionStore(
+            shared_secret=os.environ.get("BMO_SHARED_SECRET", "change-me"),
+            public_base_url=os.environ.get(
+                "BMO_PUBLIC_BASE_URL",
+                "http://localhost:8000",
+            ),
+            db_path=os.environ.get("BMO_DB_PATH", "data/bmo-web.sqlite3"),
+            registry=registry,
+        )
+    else:
+        plugin_errors = []
+
+    app[STORE_KEY] = store
+    app[BROKER_KEY] = EventBroker()
+    app[PLUGINS_DIR_KEY] = plugin_root
+    app[PLUGIN_ERRORS_KEY] = plugin_errors
+    app[ADMIN_PASSWORD_KEY] = admin_password if admin_password is not None else (
+        os.environ.get("ADMIN_PASSWORD") or os.environ.get("BMO_ADMIN_PASSWORD")
     )
-    app["broker"] = EventBroker()
+    app[PLUGIN_UPLOADS_ENABLED_KEY] = (
+        _truthy(os.environ.get("BMO_ENABLE_PLUGIN_UPLOADS", ""))
+        if enable_plugin_uploads is None
+        else enable_plugin_uploads
+    )
+    app.router.add_get("/api/games", list_games)
     app.router.add_post("/api/sessions", create_session)
     app.router.add_get("/api/sessions/{session_id}", get_session)
     app.router.add_post("/api/sessions/{session_id}/actions", submit_action)
     app.router.add_post("/api/sessions/{session_id}/guess", submit_guess)
     app.router.add_get("/api/sessions/{session_id}/events", session_events)
+    app.router.add_get("/api/admin/summary", admin_summary)
+    app.router.add_post("/api/admin/plugins/upload", admin_upload_plugin)
+    app.router.add_post("/api/admin/plugins/reload", admin_reload_plugins)
+    app.router.add_get("/admin", admin_redirect)
+    app.router.add_get("/admin/", admin_page)
+    app.router.add_get("/game/{game_key}/", game_frontend_resource)
+    app.router.add_get("/game/{game_key}/{path:.+}", game_frontend_resource)
     app.router.add_get("/game/{session_id}", game_page)
     return app
 
 
+async def list_games(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    return web.json_response(
+        {
+            "games": [
+                info.to_public_dict()
+                for info in store.registry.list_games()
+            ]
+        }
+    )
+
+
 async def create_session(request: web.Request) -> web.Response:
-    store: SessionStore = request.app["store"]
+    store = request.app[STORE_KEY]
     if request.headers.get("X-BMO-Secret") != store.shared_secret:
         return web.json_response({"error": "unauthorized"}, status=401)
 
@@ -59,7 +124,7 @@ async def create_session(request: web.Request) -> web.Response:
 
 
 async def get_session(request: web.Request) -> web.Response:
-    store: SessionStore = request.app["store"]
+    store = request.app[STORE_KEY]
     session, player_id = _authorized_session(request, store)
     return web.json_response(store.serialize(session, player_id=player_id))
 
@@ -93,8 +158,8 @@ async def _submit_action(
     action: str,
     payload: dict[str, Any],
 ) -> web.Response:
-    store: SessionStore = request.app["store"]
-    broker: EventBroker = request.app["broker"]
+    store = request.app[STORE_KEY]
+    broker = request.app[BROKER_KEY]
     session_id = request.match_info["session_id"]
     player_id = request.query.get("player_id", "")
     token = request.query.get("token", "")
@@ -125,8 +190,8 @@ async def _submit_action(
 
 
 async def session_events(request: web.Request) -> web.StreamResponse:
-    store: SessionStore = request.app["store"]
-    broker: EventBroker = request.app["broker"]
+    store = request.app[STORE_KEY]
+    broker = request.app[BROKER_KEY]
     session, player_id = _authorized_session(request, store)
     queue = broker.subscribe(session.session_id)
 
@@ -158,14 +223,130 @@ async def session_events(request: web.Request) -> web.StreamResponse:
 
 
 async def game_page(request: web.Request) -> web.Response:
-    store: SessionStore = request.app["store"]
+    store = request.app[STORE_KEY]
     session_id = request.match_info["session_id"]
     session = store.get(session_id)
     if not session:
         return web.Response(text="Game not found", status=404)
+    frontend_path = store.registry.frontend_path(session.game_key)
+    if frontend_path:
+        return _plugin_frontend_response(
+            session_id=session_id,
+            game_key=session.game_key,
+            frontend_path=frontend_path,
+        )
     if session.game_key == "hokm":
         return web.Response(text=_hokm_html(session_id), content_type="text/html")
     return web.Response(text=_wordle_html(session_id), content_type="text/html")
+
+
+async def game_frontend_resource(request: web.Request) -> web.StreamResponse:
+    store = request.app[STORE_KEY]
+    game_key = request.match_info["game_key"]
+    try:
+        frontend_path = store.registry.frontend_path(game_key)
+    except ValueError as exc:
+        raise web.HTTPNotFound(text="Game not found") from exc
+    if not frontend_path:
+        raise web.HTTPNotFound(text="No plugin frontend for this game")
+
+    path = request.match_info.get("path", "")
+    if not path:
+        return _plugin_frontend_response(
+            session_id="",
+            game_key=game_key,
+            frontend_path=frontend_path,
+        )
+
+    relative_path = _safe_web_path(path)
+    root = frontend_path.parent.resolve()
+    target = (root / relative_path.as_posix()).resolve()
+    if not target.is_relative_to(root):
+        raise web.HTTPForbidden(text="Forbidden")
+    if target.is_dir():
+        target = target / "index.html"
+    if not target.is_file():
+        raise web.HTTPNotFound(text="Asset not found")
+    if target == frontend_path.resolve():
+        return _plugin_frontend_response(
+            session_id="",
+            game_key=game_key,
+            frontend_path=frontend_path,
+        )
+    return web.FileResponse(target)
+
+
+async def admin_redirect(request: web.Request) -> web.Response:
+    raise web.HTTPFound("/admin/")
+
+
+async def admin_page(request: web.Request) -> web.Response:
+    return web.Response(text=_admin_html(), content_type="text/html")
+
+
+async def admin_summary(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    return web.json_response(_admin_summary(request.app, store))
+
+
+async def admin_upload_plugin(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    if not request.app[PLUGIN_UPLOADS_ENABLED_KEY]:
+        return web.json_response(
+            {
+                "error": (
+                    "Plugin uploads are disabled. Set "
+                    "BMO_ENABLE_PLUGIN_UPLOADS=1 to allow trusted admin uploads."
+                )
+            },
+            status=403,
+        )
+
+    try:
+        reader = await request.multipart()
+    except (AssertionError, ValueError):
+        return web.json_response({"error": "expected multipart upload"}, status=400)
+
+    data: bytes | None = None
+    while True:
+        field = await reader.next()
+        if field is None:
+            break
+        if field.name != "plugin":
+            continue
+        data = await _read_upload(field)
+        break
+
+    if not data:
+        return web.json_response({"error": "missing plugin file"}, status=400)
+
+    try:
+        plugin = install_plugin_zip(data, request.app[PLUGINS_DIR_KEY])
+    except PluginValidationError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    errors = _reload_plugins(request.app)
+    return web.json_response(
+        {
+            "game": plugin.info.to_public_dict(),
+            "plugin_errors": errors,
+            "summary": _admin_summary(request.app, store),
+        }
+    )
+
+
+async def admin_reload_plugins(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    errors = _reload_plugins(request.app)
+    return web.json_response(
+        {
+            "plugin_errors": errors,
+            "summary": _admin_summary(request.app, store),
+        }
+    )
 
 
 def _authorized_session(
@@ -206,6 +387,421 @@ def _ensure_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     raise ValueError("payload must be an object")
+
+
+def _register_plugins(registry: GameRegistry, plugins_dir: Path) -> list[str]:
+    discovery = discover_plugins(plugins_dir)
+    errors = list(discovery.errors)
+    for plugin in discovery.plugins:
+        try:
+            registry.register_plugin(plugin)
+        except ValueError as exc:
+            errors.append(f"{plugin.info.key}: {exc}")
+    return errors
+
+
+def _reload_plugins(app: web.Application) -> list[str]:
+    store = app[STORE_KEY]
+    registry = GameRegistry.defaults()
+    errors = _register_plugins(registry, app[PLUGINS_DIR_KEY])
+    store.replace_registry(registry)
+    app[PLUGIN_ERRORS_KEY] = errors
+    return errors
+
+
+def _admin_summary(
+    app: web.Application,
+    store: SessionStore,
+) -> dict[str, object]:
+    return {
+        "games": [
+            info.to_public_dict()
+            for info in store.registry.list_games()
+        ],
+        "sessions": store.list_sessions(limit=50),
+        "config": {
+            "public_base_url": store.public_base_url,
+            "db_path": store.db_path,
+            "plugins_dir": str(app[PLUGINS_DIR_KEY]),
+            "plugin_uploads_enabled": bool(app[PLUGIN_UPLOADS_ENABLED_KEY]),
+            "admin_password_configured": bool(app[ADMIN_PASSWORD_KEY]),
+        },
+        "plugin_errors": list(app[PLUGIN_ERRORS_KEY]),
+    }
+
+
+def _require_admin(request: web.Request, store: SessionStore) -> None:
+    admin_password = str(request.app[ADMIN_PASSWORD_KEY] or "")
+    provided_admin = request.headers.get("X-BMO-Admin", "")
+    provided_secret = request.headers.get("X-BMO-Secret", "")
+
+    if provided_secret and hmac_compare(provided_secret, store.shared_secret):
+        return
+    if admin_password and hmac_compare(provided_admin, admin_password):
+        return
+    if not admin_password and hmac_compare(provided_admin, store.shared_secret):
+        return
+
+    raise web.HTTPUnauthorized(
+        text=json.dumps({"error": "unauthorized"}),
+        content_type="application/json",
+    )
+
+
+def hmac_compare(left: str, right: str) -> bool:
+    return hmac.compare_digest(left, right)
+
+
+async def _read_upload(field: Any) -> bytes:
+    chunks = bytearray()
+    while True:
+        chunk = await field.read_chunk()
+        if not chunk:
+            break
+        chunks.extend(chunk)
+        if len(chunks) > MAX_PLUGIN_ZIP_BYTES:
+            raise web.HTTPRequestEntityTooLarge(
+                max_size=MAX_PLUGIN_ZIP_BYTES,
+                actual_size=len(chunks),
+            )
+    return bytes(chunks)
+
+
+def _plugin_frontend_response(
+    *,
+    session_id: str,
+    game_key: str,
+    frontend_path: Path,
+) -> web.Response:
+    text = frontend_path.read_text(encoding="utf-8")
+    asset_base = f"/game/{game_key}/"
+    replacements = {
+        "__SESSION_JSON__": json.dumps(session_id),
+        "__SESSION_ID__": session_id,
+        "__GAME_KEY__": game_key,
+        "__ASSET_BASE__": asset_base,
+    }
+    for token, value in replacements.items():
+        text = text.replace(token, value)
+    return web.Response(text=text, content_type="text/html")
+
+
+def _safe_web_path(path: str) -> PurePosixPath:
+    if "\\" in path or "\x00" in path:
+        raise web.HTTPForbidden(text="Forbidden")
+    relative = PurePosixPath(path)
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        raise web.HTTPForbidden(text="Forbidden")
+    return relative
+
+
+def _truthy(value: str) -> bool:
+    return value.lower().strip() in {"1", "true", "yes", "on"}
+
+
+def _admin_html() -> str:
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BMO Admin</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, sans-serif;
+      background: #f5f7fb;
+      color: #17202f;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #f5f7fb;
+    }
+    main {
+      width: min(1120px, calc(100vw - 28px));
+      margin: 0 auto;
+      padding: 24px 0 36px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    button,
+    input {
+      min-height: 40px;
+      border-radius: 6px;
+      border: 1px solid #b7c2d4;
+      font: inherit;
+    }
+    button {
+      padding: 0 14px;
+      background: #1b6ed6;
+      color: white;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #eef3fa;
+      color: #17202f;
+    }
+    input[type="password"] {
+      width: min(360px, 100%);
+      padding: 0 12px;
+      background: white;
+      color: #17202f;
+    }
+    input[type="file"] {
+      padding: 7px;
+      background: white;
+    }
+    section {
+      border-top: 1px solid #d7deea;
+      padding: 18px 0;
+    }
+    .auth,
+    .tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border: 1px solid #d7deea;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th,
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #e5ebf3;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: #eef3fa;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    pre {
+      min-height: 120px;
+      overflow: auto;
+      padding: 12px;
+      border: 1px solid #d7deea;
+      border-radius: 8px;
+      background: #17202f;
+      color: #edf3ff;
+    }
+    .muted {
+      color: #607086;
+    }
+    .error {
+      color: #b42335;
+      font-weight: 800;
+    }
+    @media (max-width: 760px) {
+      header,
+      .grid {
+        display: block;
+      }
+      .tools {
+        margin-top: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>BMO Admin</h1>
+        <div id="status" class="muted">Locked</div>
+      </div>
+      <div class="auth">
+        <input id="secret" type="password" autocomplete="current-password"
+          placeholder="Admin password or shared secret">
+        <button id="load">Unlock</button>
+      </div>
+    </header>
+
+    <section>
+      <div class="tools">
+        <button id="reload" class="secondary">Reload Plugins</button>
+        <form id="upload-form" class="tools">
+          <input id="plugin-file" name="plugin" type="file" accept=".zip">
+          <button>Upload Plugin</button>
+        </form>
+      </div>
+      <p id="upload-note" class="muted"></p>
+    </section>
+
+    <div class="grid">
+      <section>
+        <h2>Games</h2>
+        <div id="games"></div>
+      </section>
+      <section>
+        <h2>Config</h2>
+        <pre id="config">No data loaded.</pre>
+      </section>
+    </div>
+
+    <section>
+      <h2>Recent Sessions</h2>
+      <div id="sessions"></div>
+    </section>
+
+    <section>
+      <h2>Plugin Errors</h2>
+      <pre id="errors">No data loaded.</pre>
+    </section>
+  </main>
+  <script>
+    const secret = document.querySelector("#secret");
+    const statusEl = document.querySelector("#status");
+    const gamesEl = document.querySelector("#games");
+    const sessionsEl = document.querySelector("#sessions");
+    const configEl = document.querySelector("#config");
+    const errorsEl = document.querySelector("#errors");
+    const uploadNote = document.querySelector("#upload-note");
+    const uploadForm = document.querySelector("#upload-form");
+    const pluginFile = document.querySelector("#plugin-file");
+
+    function headers() {
+      return { "X-BMO-Admin": secret.value };
+    }
+
+    function cell(text) {
+      const td = document.createElement("td");
+      td.textContent = text ?? "";
+      return td;
+    }
+
+    function table(columns, rows) {
+      const tableEl = document.createElement("table");
+      tableEl.className = "table";
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      for (const column of columns) {
+        const th = document.createElement("th");
+        th.textContent = column;
+        headRow.append(th);
+      }
+      head.append(headRow);
+      const body = document.createElement("tbody");
+      for (const row of rows) {
+        const tr = document.createElement("tr");
+        row.forEach((value) => tr.append(cell(value)));
+        body.append(tr);
+      }
+      tableEl.append(head, body);
+      return tableEl;
+    }
+
+    function render(summary) {
+      statusEl.textContent = "Connected";
+      statusEl.className = "muted";
+      uploadNote.textContent = summary.config.plugin_uploads_enabled
+        ? "Plugin uploads execute trusted Python code from the zip."
+        : "Uploads are disabled. Set BMO_ENABLE_PLUGIN_UPLOADS=1 to enable them.";
+      gamesEl.replaceChildren(table(
+        ["Key", "Title", "Players", "Private", "Source"],
+        summary.games.map((game) => [
+          game.key,
+          game.title,
+          `${game.min_players}-${game.max_players || "∞"}`,
+          game.private_player_links ? "yes" : "no",
+          game.source,
+        ])
+      ));
+      sessionsEl.replaceChildren(table(
+        ["Session", "Game", "Players", "Updated"],
+        summary.sessions.map((session) => [
+          session.session_id,
+          session.game,
+          session.players.length,
+          session.updated_at,
+        ])
+      ));
+      configEl.textContent = JSON.stringify(summary.config, null, 2);
+      errorsEl.textContent = summary.plugin_errors.length
+        ? summary.plugin_errors.join("\\n")
+        : "No plugin errors.";
+    }
+
+    async function loadSummary() {
+      const res = await fetch("/api/admin/summary", { headers: headers() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load admin data.");
+      render(data);
+    }
+
+    document.querySelector("#load").addEventListener("click", async () => {
+      try {
+        await loadSummary();
+      } catch (error) {
+        statusEl.textContent = error.message;
+        statusEl.className = "error";
+      }
+    });
+
+    document.querySelector("#reload").addEventListener("click", async () => {
+      const res = await fetch("/api/admin/plugins/reload", {
+        method: "POST",
+        headers: headers(),
+      });
+      const data = await res.json();
+      if (res.ok) render(data.summary);
+    });
+
+    uploadForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!pluginFile.files.length) return;
+      const form = new FormData();
+      form.append("plugin", pluginFile.files[0]);
+      const res = await fetch("/api/admin/plugins/upload", {
+        method: "POST",
+        headers: headers(),
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        uploadNote.textContent = data.error || "Upload failed.";
+        uploadNote.className = "error";
+        return;
+      }
+      uploadNote.className = "muted";
+      render(data.summary);
+    });
+  </script>
+</body>
+</html>"""
 
 
 def _wordle_html(session_id: str) -> str:

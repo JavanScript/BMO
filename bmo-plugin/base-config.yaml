@@ -6,3 +6,4 @@ shared_secret: "change-me"
 min_players:
   hokm: 4
   wordle: 1
+game_overrides: {}

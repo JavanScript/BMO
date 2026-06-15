@@ -24,10 +24,16 @@ def public_launch_message(
     game_key: str,
     session_url: str,
     private_links_sent: bool,
+    private_player_links: bool | None = None,
     failed_player_ids: Iterable[str] = (),
 ) -> str:
     failed = list(failed_player_ids)
-    if requires_private_player_links(game_key):
+    should_send_privately = (
+        requires_private_player_links(game_key)
+        if private_player_links is None
+        else private_player_links
+    )
+    if should_send_privately:
         message = (
             f"Game launched: {session_url}\n\n"
             "I sent each signed player link in a private Matrix room. "

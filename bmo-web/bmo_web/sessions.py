@@ -52,6 +52,7 @@ class SessionStore:
         self.shared_secret = shared_secret
         self.public_base_url = public_base_url.rstrip("/")
         self.registry = registry or GameRegistry.defaults()
+        self.db_path = str(db_path)
         self._lock = RLock()
         self._db = _connect(db_path)
         self._migrate()
@@ -221,6 +222,49 @@ class SessionStore:
         }
         data.update(session.game.serialize_public(player_id=player_id))
         return data
+
+    def list_sessions(self, *, limit: int = 50) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT session_id, lobby_id, room_id, game_key, public_base_url,
+                       created_at, updated_at
+                FROM sessions
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+            sessions = []
+            for row in rows:
+                players = [
+                    str(player_row["player_id"])
+                    for player_row in self._db.execute(
+                        """
+                        SELECT player_id FROM players
+                        WHERE session_id = ?
+                        ORDER BY player_id
+                        """,
+                        (row["session_id"],),
+                    ).fetchall()
+                ]
+                sessions.append(
+                    {
+                        "session_id": str(row["session_id"]),
+                        "lobby_id": str(row["lobby_id"]),
+                        "room_id": str(row["room_id"]),
+                        "game": str(row["game_key"]),
+                        "url": f"{row['public_base_url']}/game/{row['session_id']}",
+                        "players": players,
+                        "created_at": str(row["created_at"]),
+                        "updated_at": str(row["updated_at"]),
+                    }
+                )
+            return sessions
+
+    def replace_registry(self, registry: GameRegistry) -> None:
+        with self._lock:
+            self.registry = registry
 
     def _replace_players(self, session_id: str, players: list[str]) -> None:
         self._db.execute("DELETE FROM players WHERE session_id = ?", (session_id,))

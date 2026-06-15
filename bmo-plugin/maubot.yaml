@@ -1,6 +1,6 @@
 maubot: 0.1.0
 id: dev.bmo.games
-version: 0.2.0
+version: 0.3.0
 license: MIT
 modules:
   - bmo_plugin
@@ -8,4 +8,3 @@ main_class: BMO
 config: true
 extra_files:
   - base-config.yaml
-
