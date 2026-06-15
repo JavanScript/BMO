@@ -32,7 +32,7 @@ class Game(Protocol):
     def handle_action(self, player_id: str, action: str, payload: JsonDict) -> GameReply:
         raise NotImplementedError
 
-    def serialize_public(self) -> JsonDict:
+    def serialize_public(self, player_id: str | None = None) -> JsonDict:
         raise NotImplementedError
 
     def to_state(self) -> JsonDict:
@@ -42,9 +42,8 @@ class Game(Protocol):
 class GameFactory(Protocol):
     info: GameInfo
 
-    def create(self) -> Game:
+    def create(self, players: list[str] | None = None) -> Game:
         raise NotImplementedError
 
     def load(self, state: JsonDict) -> Game:
         raise NotImplementedError
-

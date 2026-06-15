@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -96,7 +97,10 @@ class SessionStoreTest(unittest.TestCase):
             self.assertIn("A", restored.game.board)
 
     def test_rejects_unknown_game(self) -> None:
-        store = SessionStore(shared_secret="secret", public_base_url="https://bmo.example.org")
+        store = SessionStore(
+            shared_secret="secret",
+            public_base_url="https://bmo.example.org",
+        )
 
         with self.assertRaises(ValueError):
             store.create_session(
@@ -107,7 +111,10 @@ class SessionStoreTest(unittest.TestCase):
             )
 
     def test_rejects_empty_player_list(self) -> None:
-        store = SessionStore(shared_secret="secret", public_base_url="https://bmo.example.org")
+        store = SessionStore(
+            shared_secret="secret",
+            public_base_url="https://bmo.example.org",
+        )
 
         with self.assertRaises(ValueError):
             store.create_session(
@@ -116,6 +123,73 @@ class SessionStoreTest(unittest.TestCase):
                 room_id="!room:example.org",
                 players=[],
             )
+
+    def test_hokm_requires_exactly_four_players(self) -> None:
+        store = SessionStore(
+            shared_secret="secret",
+            public_base_url="https://bmo.example.org",
+        )
+
+        with self.assertRaises(ValueError):
+            store.create_session(
+                game_key="hokm",
+                lobby_id="lobby",
+                room_id="!room:example.org",
+                players=["@a:example.org", "@b:example.org", "@c:example.org"],
+            )
+
+        session = store.create_session(
+            game_key="hokm",
+            lobby_id="lobby",
+            room_id="!room:example.org",
+            players=[
+                "@a:example.org",
+                "@b:example.org",
+                "@c:example.org",
+                "@d:example.org",
+            ],
+        )
+
+        self.assertEqual(session.game_key, "hokm")
+        self.assertEqual(len(session.players), 4)
+
+    def test_hokm_serialization_does_not_expose_other_hands(self) -> None:
+        store = SessionStore(
+            shared_secret="secret",
+            public_base_url="https://bmo.example.org",
+        )
+        session = store.create_session(
+            game_key="hokm",
+            lobby_id="lobby",
+            room_id="!room:example.org",
+            players=[
+                "@a:example.org",
+                "@b:example.org",
+                "@c:example.org",
+                "@d:example.org",
+            ],
+        )
+        hakem = session.game.hakem
+        token = store.player_token(session.session_id, hakem)
+        store.submit_action(
+            session_id=session.session_id,
+            player_id=hakem,
+            token=token,
+            action="choose_trump",
+            payload={"suit": "spades"},
+        )
+        restored = store.get(session.session_id)
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        other_player = next(player for player in restored.players if player != hakem)
+
+        hakem_data = store.serialize(restored, player_id=hakem)
+        other_data = store.serialize(restored, player_id=other_player)
+        other_hand_ids = [card["id"] for card in other_data["hand"]]
+
+        self.assertNotIn("hands", hakem_data)
+        for card_id in other_hand_ids:
+            self.assertNotIn(card_id, json.dumps(hakem_data))
 
 
 if __name__ == "__main__":

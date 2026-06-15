@@ -66,12 +66,19 @@ class SessionStore:
         public_base_url: str | None = None,
     ) -> GameSession:
         normalized_game = game_key.lower().strip()
-        game = self.registry.create(normalized_game)
+        clean_players = sorted({player for player in players if player})
+        game_info = self.registry.info(normalized_game)
+        if len(clean_players) < game_info.min_players:
+            raise ValueError(
+                f"{game_info.title} requires at least {game_info.min_players} player(s)."
+            )
+        if game_info.max_players is not None and len(clean_players) > game_info.max_players:
+            raise ValueError(
+                f"{game_info.title} allows at most {game_info.max_players} player(s)."
+            )
+        game = self.registry.create(normalized_game, players=clean_players)
         session_id = uuid4().hex
         now = _now()
-        clean_players = sorted({player for player in players if player})
-        if not clean_players:
-            raise ValueError("A session requires at least one player.")
         base_url = (public_base_url or self.public_base_url).rstrip("/")
 
         with self._lock, self._db:
@@ -143,7 +150,11 @@ class SessionStore:
             raise LookupError("session not found")
         self.require_player(session, player_id, token)
 
-        reply = session.game.handle_action(player_id=player_id, action=action, payload=payload)
+        reply = session.game.handle_action(
+            player_id=player_id,
+            action=action,
+            payload=payload,
+        )
         session.updated_at = _now()
         with self._lock, self._db:
             self._db.execute(
@@ -208,7 +219,7 @@ class SessionStore:
             "created_at": session.created_at,
             "updated_at": session.updated_at,
         }
-        data.update(session.game.serialize_public())
+        data.update(session.game.serialize_public(player_id=player_id))
         return data
 
     def _replace_players(self, session_id: str, players: list[str]) -> None:

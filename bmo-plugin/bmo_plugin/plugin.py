@@ -13,7 +13,15 @@ from .web_client import BmoWebClient, WebSessionError
 
 
 GAME_DESCRIPTIONS = {
+    "hokm": "Four-player Hokm / حکم partnership table.",
     "wordle": "Browser Wordle lobby for the room.",
+}
+GAME_MIN_PLAYERS = {
+    "hokm": 4,
+    "wordle": 1,
+}
+GAME_MAX_PLAYERS = {
+    "hokm": 4,
 }
 
 REACTION_EVENT = EventType.find("m.reaction", t_class=EventType.Class.MESSAGE)
@@ -44,7 +52,8 @@ class BMO(Plugin):
         await evt.reply(
             "BMO commands:\n"
             "!bmo games - list games\n"
-            "!bmo start wordle - create a lobby\n"
+            "!bmo start wordle - create a Wordle lobby\n"
+            "!bmo start hokm - create a Hokm / حکم lobby\n"
             "!bmo launch - launch the active lobby\n"
             "!bmo status - show lobby status\n"
             "!bmo cancel - cancel the active lobby"
@@ -53,7 +62,8 @@ class BMO(Plugin):
     @bmo.subcommand("games", help="List available games")
     async def games_command(self, evt: MessageEvent) -> None:
         games = "\n".join(
-            f"- {key}: {description}" for key, description in sorted(GAME_DESCRIPTIONS.items())
+            f"- {key}: {description}"
+            for key, description in sorted(GAME_DESCRIPTIONS.items())
         )
         await evt.reply(games)
 
@@ -62,7 +72,7 @@ class BMO(Plugin):
     async def start_command(self, evt: MessageEvent, game_key: str | None = None) -> None:
         game_key = (game_key or "").lower().strip()
         if not game_key:
-            await evt.reply("Pick a game, like !bmo start wordle.")
+            await evt.reply("Pick a game, like !bmo start wordle or !bmo start hokm.")
             return
         if game_key not in GAME_DESCRIPTIONS:
             await evt.reply(f"I do not know {game_key!r}. Try !bmo games.")
@@ -76,12 +86,17 @@ class BMO(Plugin):
             )
             return
 
-        min_players = int(self.config["min_players"].get(game_key, 1))
+        min_players = max(
+            int(self.config["min_players"].get(game_key, 1)),
+            GAME_MIN_PLAYERS.get(game_key, 1),
+        )
+        max_players = GAME_MAX_PLAYERS.get(game_key)
         message_id = await evt.reply(
             self.lobbies.render_new_lobby(
                 game_key=game_key,
                 host_id=str(evt.sender),
                 min_players=min_players,
+                max_players=max_players,
             )
         )
         self.lobbies.create(
@@ -90,6 +105,7 @@ class BMO(Plugin):
             game_key=game_key,
             message_id=str(message_id),
             min_players=min_players,
+            max_players=max_players,
         )
         await self.client.react(
             evt.room_id,
@@ -101,7 +117,7 @@ class BMO(Plugin):
     async def launch_command(self, evt: MessageEvent) -> None:
         lobby = self.lobbies.get_for_room(evt.room_id)
         if not lobby:
-            await evt.reply("No lobby is active here. Start one with !bmo start wordle.")
+            await evt.reply("No lobby is active here. Start one with !bmo start hokm.")
             return
         if str(evt.sender) != lobby.host_id:
             await evt.reply("Only the lobby host can launch the game.")

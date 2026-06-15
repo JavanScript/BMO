@@ -111,7 +111,8 @@ class WordleFactory:
         if not self._answers:
             raise ValueError("Wordle requires at least one answer.")
 
-    def create(self) -> "WordleGame":
+    def create(self, players: list[str] | None = None) -> "WordleGame":
+        del players
         return WordleGame(answer=SystemRandom().choice(self._answers))
 
     def load(self, state: JsonDict) -> "WordleGame":
@@ -138,7 +139,8 @@ class WordleGame:
             raise ValueError(f"Unsupported Wordle action: {action}")
         return self.guess(player_id=player_id, text=str(payload.get("guess", "")))
 
-    def serialize_public(self) -> JsonDict:
+    def serialize_public(self, player_id: str | None = None) -> JsonDict:
+        del player_id
         return {
             "board": self.board,
             "guess_count": len(self.guesses or []),

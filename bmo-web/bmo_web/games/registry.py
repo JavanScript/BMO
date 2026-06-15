@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .base import Game, GameFactory, GameInfo, JsonDict
+from .hokm import HokmFactory
 from .wordle import WordleFactory
 
 
@@ -11,14 +12,15 @@ class GameRegistry:
     @classmethod
     def defaults(cls) -> "GameRegistry":
         registry = cls()
+        registry.register(HokmFactory())
         registry.register(WordleFactory())
         return registry
 
     def register(self, factory: GameFactory) -> None:
         self._factories[factory.info.key] = factory
 
-    def create(self, key: str) -> Game:
-        return self._get_factory(key).create()
+    def create(self, key: str, players: list[str] | None = None) -> Game:
+        return self._get_factory(key).create(players=players)
 
     def load(self, key: str, state: JsonDict) -> Game:
         return self._get_factory(key).load(state)
@@ -38,4 +40,3 @@ class GameRegistry:
             return self._factories[normalized]
         except KeyError as exc:
             raise ValueError(f"Unknown game: {key}") from exc
-

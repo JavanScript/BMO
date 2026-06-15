@@ -8,7 +8,7 @@ BMO is a Dockerized Matrix game bot. Matrix is the lobby and social layer; the a
 - `bmo-web/` is the browser game server. It creates sessions, serves game pages, owns game state, persists sessions to SQLite, and streams live updates to browsers.
 - `docker-compose.yml` runs the BMO web service for local browser testing. Maubot can run separately on the server, with the BMO plugin installed into that maubot instance.
 
-The first vertical slice is browser Wordle. The Matrix room creates the lobby, players mark themselves ready with a reaction, then the bot posts signed browser links for the ready players.
+BMO currently includes browser Wordle and standard four-player Hokm / حکم. The Matrix room creates the lobby, players mark themselves ready with a reaction, then the bot posts signed browser links for the ready players.
 
 ## Matrix Flow
 
@@ -17,11 +17,14 @@ Commands are grouped under `!bmo`:
 - `!bmo` - show help
 - `!bmo games` - list games
 - `!bmo start wordle` - create a room lobby
+- `!bmo start hokm` - create a four-player Hokm / حکم lobby
 - `!bmo launch` - launch the active lobby and post the game URL
 - `!bmo status` - show ready count
 - `!bmo cancel` - cancel the lobby
 
 The default ready reaction is `👍`. The bot seeds that reaction under the lobby message, so players can tap it to join/ready up. You can change `ready_reaction` in the maubot plugin config to any Matrix reaction key you prefer.
+
+Hokm uses exactly four Matrix players. Extra ready reactions are ignored once the table has four players.
 
 ## Docker
 
@@ -130,6 +133,26 @@ curl -sS -X POST http://localhost:8000/api/sessions \
 
 The response includes `player_links`. Open one of those URLs in your browser. Each link is signed for a specific Matrix player, so the plain `/game/<session-id>` URL will load but will ask for a signed player link before allowing play.
 
+For a local Hokm table, create a session with exactly four players:
+
+```sh
+curl -sS -X POST http://localhost:8000/api/sessions \
+  -H 'Content-Type: application/json' \
+  -H 'X-BMO-Secret: change-me' \
+  -d '{
+    "game": "hokm",
+    "lobby_id": "local-hokm",
+    "room_id": "!local:localhost",
+    "players": [
+      "@alice:localhost",
+      "@bob:localhost",
+      "@cyrus:localhost",
+      "@darya:localhost"
+    ],
+    "public_base_url": "http://localhost:8000"
+  }'
+```
+
 ## Plugin Build
 
 Build the maubot plugin bundle with the helper service:
@@ -153,6 +176,7 @@ bmo_web_url: http://bmo-web:8000
 public_game_url: https://bmo.example.com
 shared_secret: same-secret-as-BMO_SHARED_SECRET
 min_players:
+  hokm: 4
   wordle: 1
 ```
 
@@ -165,17 +189,17 @@ If maubot runs outside this Compose project on the same Docker host, set `bmo_we
 Games implement a small contract:
 
 - metadata: key, title, description, min/max players
-- `create()` for new sessions
+- `create(players)` for new sessions
 - `load(state)` for persisted sessions
 - `handle_action(player_id, action, payload)` for browser actions
-- `serialize_public()` for browser-visible state
+- `serialize_public(player_id)` for browser-visible state, including private per-player views when needed
 - `to_state()` for SQLite persistence
 
-The browser currently uses Server-Sent Events from `/api/sessions/<id>/events` so all open players see state changes without refreshing.
+The browser currently uses Server-Sent Events from `/api/sessions/<id>/events` so all open players see state changes without refreshing. SSE events are serialized per signed player link, so games with private hands only reveal the current player's cards.
 
 ## Test
 
-The unit tests cover lobby behavior, session creation, and Wordle logic without needing Matrix or Docker:
+The unit tests cover lobby behavior, session creation, Wordle logic, and Hokm rules without needing Matrix or Docker:
 
 ```sh
 python3 -m unittest discover

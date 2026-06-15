@@ -103,6 +103,62 @@ class LobbyManagerTest(unittest.TestCase):
         self.assertIn("@ada:example.org", text)
         self.assertIn("Tap 👍", text)
 
+    def test_lobby_with_max_players_launches_only_when_full(self) -> None:
+        manager = LobbyManager(ready_reaction="👍")
+        lobby = manager.create(
+            room_id="!room:example.org",
+            host_id="@host:example.org",
+            game_key="hokm",
+            message_id="$message",
+            min_players=4,
+            max_players=4,
+        )
+
+        self.assertFalse(lobby.can_launch)
+        for player in ("@a:example.org", "@b:example.org", "@c:example.org"):
+            manager.mark_ready(_reaction(player))
+
+        self.assertTrue(lobby.can_launch)
+        self.assertEqual(lobby.ready_count, 4)
+
+    def test_lobby_ignores_extra_ready_reactions_after_full(self) -> None:
+        manager = LobbyManager(ready_reaction="👍")
+        lobby = manager.create(
+            room_id="!room:example.org",
+            host_id="@host:example.org",
+            game_key="hokm",
+            message_id="$message",
+            min_players=4,
+            max_players=4,
+        )
+
+        for player in (
+            "@a:example.org",
+            "@b:example.org",
+            "@c:example.org",
+            "@extra:example.org",
+        ):
+            manager.mark_ready(_reaction(player))
+
+        self.assertEqual(lobby.ready_count, 4)
+        self.assertNotIn("@extra:example.org", lobby.players)
+        self.assertIn("Ready: 4/4", manager.render_lobby(lobby))
+
+def _reaction(sender: str):
+    return reaction_from_event(
+        SimpleNamespace(
+            room_id="!room:example.org",
+            sender=sender,
+            content={
+                "m.relates_to": {
+                    "rel_type": "m.annotation",
+                    "event_id": "$message",
+                    "key": "👍",
+                }
+            },
+        )
+    )
+
 
 if __name__ == "__main__":
     unittest.main()

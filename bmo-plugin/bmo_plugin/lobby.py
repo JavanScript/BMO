@@ -13,6 +13,7 @@ class Lobby:
     game_key: str
     message_id: str
     min_players: int
+    max_players: int | None = None
     ready_users: set[str] = field(default_factory=set)
 
     @property
@@ -25,7 +26,13 @@ class Lobby:
 
     @property
     def can_launch(self) -> bool:
+        if self.max_players is not None and self.min_players >= self.max_players:
+            return self.ready_count == self.max_players
         return self.ready_count >= self.min_players
+
+    @property
+    def is_full(self) -> bool:
+        return self.max_players is not None and self.ready_count >= self.max_players
 
 
 @dataclass(frozen=True)
@@ -50,6 +57,7 @@ class LobbyManager:
         game_key: str,
         message_id: str,
         min_players: int,
+        max_players: int | None = None,
     ) -> Lobby:
         if room_id in self._by_room:
             raise LobbyAlreadyExists(self._by_room[room_id])
@@ -61,6 +69,7 @@ class LobbyManager:
             game_key=game_key.lower().strip(),
             message_id=message_id,
             min_players=max(1, min_players),
+            max_players=max_players,
             ready_users={host_id},
         )
         self._by_room[room_id] = lobby
@@ -80,6 +89,8 @@ class LobbyManager:
 
         if reaction.sender in lobby.ready_users:
             return None
+        if lobby.is_full:
+            return None
 
         lobby.ready_users.add(reaction.sender)
         return lobby
@@ -96,11 +107,13 @@ class LobbyManager:
         game_key: str,
         host_id: str,
         min_players: int,
+        max_players: int | None = None,
     ) -> str:
+        target = _ready_target(min_players=min_players, max_players=max_players)
         return (
             f"BMO lobby: {game_key}\n"
             f"Host: {host_id}\n"
-            f"Ready: 1/{max(1, min_players)}\n"
+            f"Ready: 1/{target}\n"
             "Players:\n"
             f"- {host_id}\n"
             f"Tap {self.ready_reaction} under this message to join/ready up.\n"
@@ -109,10 +122,14 @@ class LobbyManager:
 
     def render_lobby(self, lobby: Lobby) -> str:
         players = "\n".join(f"- {player}" for player in lobby.players)
+        target = _ready_target(
+            min_players=lobby.min_players,
+            max_players=lobby.max_players,
+        )
         return (
             f"BMO lobby: {lobby.game_key}\n"
             f"Host: {lobby.host_id}\n"
-            f"Ready: {lobby.ready_count}/{lobby.min_players}\n"
+            f"Ready: {lobby.ready_count}/{target}\n"
             "Players:\n"
             f"{players}\n"
             f"Tap {self.ready_reaction} under the lobby message to join/ready up.\n"
@@ -158,3 +175,9 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
     if hasattr(value, "__dict__"):
         return vars(value)
     return {}
+
+
+def _ready_target(*, min_players: int, max_players: int | None) -> int:
+    if max_players is not None and min_players >= max_players:
+        return max_players
+    return max(1, min_players)
