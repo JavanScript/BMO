@@ -10,8 +10,10 @@ they trust, not for accepting untrusted community uploads.
 
 - Plugin uploads are disabled by default. Set `BMO_ENABLE_PLUGIN_UPLOADS=1` only
   when trusted admins need the web upload flow.
-- Admin APIs require either the shared web secret via `X-BMO-Secret` or the
-  configured admin password via `X-BMO-Admin`.
+- Admin APIs require either:
+  - An admin session token via `X-BMO-Admin-Token` (issued by `POST /api/admin/login`)
+  - The shared web secret via `X-BMO-Secret`
+  - The configured admin password via `X-BMO-Admin`
 - Uploaded zips are rejected when they exceed size and file-count limits.
 - Zip entries are rejected for absolute paths, `..` traversal, backslashes,
   NUL bytes, symlinks, files outside the plugin root, and multiple manifests.

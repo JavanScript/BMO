@@ -33,6 +33,37 @@ class SessionStoreTest(unittest.TestCase):
             f"https://bmo.example.org/game/{session.session_id}",
         )
 
+    def test_list_sessions_batches_player_lookups(self) -> None:
+        store = SessionStore(
+            shared_secret="secret",
+            public_base_url="https://bmo.example.org",
+        )
+        store.create_session(
+            game_key="wordle",
+            lobby_id="lobby-1",
+            room_id="!room:example.org",
+            players=["@ada:example.org", "@bo:example.org"],
+            display_names={"@ada:example.org": "Ada"},
+        )
+        store.create_session(
+            game_key="hokm",
+            lobby_id="lobby-2",
+            room_id="!room:example.org",
+            players=[
+                "@ada:example.org",
+                "@bo:example.org",
+                "@cy:example.org",
+                "@di:example.org",
+            ],
+        )
+
+        listed = store.list_sessions()
+
+        self.assertEqual(len(listed), 2)
+        by_lobby = {row["lobby_id"]: row for row in listed}
+        self.assertEqual(len(by_lobby["lobby-2"]["players"]), 4)
+        self.assertEqual(by_lobby["lobby-1"]["display_names"]["@ada:example.org"], "Ada")
+
     def test_player_links_are_signed(self) -> None:
         store = SessionStore(
             shared_secret="secret",

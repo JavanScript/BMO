@@ -64,6 +64,7 @@ class SessionStore:
         lobby_id: str,
         room_id: str,
         players: list[str],
+        display_names: dict[str, str] | None = None,
         public_base_url: str | None = None,
     ) -> GameSession:
         normalized_game = game_key.lower().strip()
@@ -102,7 +103,7 @@ class SessionStore:
                     now,
                 ),
             )
-            self._replace_players(session_id, clean_players)
+            self._replace_players(session_id, clean_players, display_names)
 
         return GameSession(
             session_id=session_id,
@@ -124,17 +125,7 @@ class SessionStore:
             ).fetchone()
             if not row:
                 return None
-            players = [
-                str(player_row["player_id"])
-                for player_row in self._db.execute(
-                    """
-                    SELECT player_id FROM players
-                    WHERE session_id = ?
-                    ORDER BY player_id
-                    """,
-                    (session_id,),
-                ).fetchall()
-            ]
+            players, _ = self._players_with_names(session_id)
         return self._session_from_row(row, players)
 
     def submit_action(
@@ -208,11 +199,13 @@ class SessionStore:
         player_id: str | None = None,
     ) -> dict[str, object]:
         game_info = self.registry.info(session.game_key)
+        display_names = self._display_names(session.session_id)
         data: dict[str, object] = {
             "session_id": session.session_id,
             "lobby_id": session.lobby_id,
             "room_id": session.room_id,
             "players": session.players,
+            "display_names": display_names,
             "player_id": player_id,
             "game": session.game_key,
             "title": game_info.title,
@@ -235,45 +228,94 @@ class SessionStore:
                 """,
                 (max(1, limit),),
             ).fetchall()
+            session_ids = [str(row["session_id"]) for row in rows]
+            players_by_session, names_by_session = self._players_for_sessions(
+                session_ids
+            )
             sessions = []
             for row in rows:
-                players = [
-                    str(player_row["player_id"])
-                    for player_row in self._db.execute(
-                        """
-                        SELECT player_id FROM players
-                        WHERE session_id = ?
-                        ORDER BY player_id
-                        """,
-                        (row["session_id"],),
-                    ).fetchall()
-                ]
+                session_id = str(row["session_id"])
                 sessions.append(
                     {
-                        "session_id": str(row["session_id"]),
+                        "session_id": session_id,
                         "lobby_id": str(row["lobby_id"]),
                         "room_id": str(row["room_id"]),
                         "game": str(row["game_key"]),
-                        "url": f"{row['public_base_url']}/game/{row['session_id']}",
-                        "players": players,
+                        "url": f"{row['public_base_url']}/game/{session_id}",
+                        "players": players_by_session.get(session_id, []),
+                        "display_names": names_by_session.get(session_id, {}),
                         "created_at": str(row["created_at"]),
                         "updated_at": str(row["updated_at"]),
                     }
                 )
             return sessions
 
+    def _players_for_sessions(
+        self, session_ids: list[str]
+    ) -> tuple[dict[str, list[str]], dict[str, dict[str, str]]]:
+        players_by_session: dict[str, list[str]] = {sid: [] for sid in session_ids}
+        names_by_session: dict[str, dict[str, str]] = {sid: {} for sid in session_ids}
+        if not session_ids:
+            return players_by_session, names_by_session
+        placeholders = ",".join("?" for _ in session_ids)
+        rows = self._db.execute(
+            f"""
+            SELECT session_id, player_id, display_name FROM players
+            WHERE session_id IN ({placeholders})
+            ORDER BY session_id, player_id
+            """,
+            session_ids,
+        ).fetchall()
+        for row in rows:
+            sid = str(row["session_id"])
+            player_id = str(row["player_id"])
+            players_by_session[sid].append(player_id)
+            names_by_session[sid][player_id] = str(row["display_name"] or "")
+        return players_by_session, names_by_session
+
+    def _display_names(self, session_id: str) -> dict[str, str]:
+        _, display_names = self._players_with_names(session_id)
+        return display_names
+
+    def _players_with_names(
+        self, session_id: str
+    ) -> tuple[list[str], dict[str, str]]:
+        rows = self._db.execute(
+            """
+            SELECT player_id, display_name FROM players
+            WHERE session_id = ?
+            ORDER BY player_id
+            """,
+            (session_id,),
+        ).fetchall()
+        players = [str(row["player_id"]) for row in rows]
+        display_names = {
+            str(row["player_id"]): str(row["display_name"] or "")
+            for row in rows
+        }
+        return players, display_names
+
     def replace_registry(self, registry: GameRegistry) -> None:
         with self._lock:
             self.registry = registry
 
-    def _replace_players(self, session_id: str, players: list[str]) -> None:
+    def _replace_players(
+        self,
+        session_id: str,
+        players: list[str],
+        display_names: dict[str, str] | None = None,
+    ) -> None:
         self._db.execute("DELETE FROM players WHERE session_id = ?", (session_id,))
+        display_names = display_names or {}
         self._db.executemany(
             """
-            INSERT INTO players (session_id, player_id)
-            VALUES (?, ?)
+            INSERT INTO players (session_id, player_id, display_name)
+            VALUES (?, ?, ?)
             """,
-            [(session_id, player) for player in players],
+            [
+                (session_id, player, display_names.get(player, ""))
+                for player in players
+            ],
         )
 
     def _session_from_row(
@@ -316,10 +358,32 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS players (
                     session_id TEXT NOT NULL,
                     player_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (session_id, player_id),
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
                 )
                 """
+            )
+            self._db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sessions_updated_at
+                ON sessions (updated_at DESC)
+                """
+            )
+            self._db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_players_session_id
+                ON players (session_id)
+                """
+            )
+            self._migrate_display_names()
+
+    def _migrate_display_names(self) -> None:
+        info = self._db.execute("PRAGMA table_info(players)").fetchall()
+        columns = {str(row["name"]) for row in info}
+        if "display_name" not in columns:
+            self._db.execute(
+                "ALTER TABLE players ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
             )
 
 

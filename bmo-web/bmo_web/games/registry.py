@@ -76,6 +76,9 @@ class GameRegistry:
     def frontend_path(self, key: str) -> Path | None:
         return self._get_game(key).frontend_path
 
+    def get_factory(self, key: str) -> GameFactory:
+        return self._get_game(key).factory
+
     def _get_factory(self, key: str) -> GameFactory:
         return self._get_game(key).factory
 

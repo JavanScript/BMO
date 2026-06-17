@@ -13,7 +13,7 @@ services:
       BMO_DB_PATH: /data/bmo-web.sqlite3
       GAME_PLUGINS_DIR: /data/plugins
       BMO_ENABLE_PLUGIN_UPLOADS: ${BMO_ENABLE_PLUGIN_UPLOADS:-0}
-      ADMIN_PASSWORD: ${BMO_ADMIN_PASSWORD:-}
+      BMO_ADMIN_PASSWORD: ${BMO_ADMIN_PASSWORD:-}
       PORT: 8000
     ports:
       - "8000:8000"

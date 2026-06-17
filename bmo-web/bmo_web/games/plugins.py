@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import importlib.util
+import json
 import re
 import shutil
-import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any
-from uuid import uuid4
 
-from .base import GameFactory, GameInfo, GamePlugin
+from .base import GameInfo, GamePlugin
+from .sandbox import PluginSandbox, SandboxError, SandboxedFactory
 
 
 MANIFEST_NAMES = {"manifest.yaml", "manifest.yml"}
@@ -20,6 +19,8 @@ MAX_PLUGIN_ZIP_BYTES = 5 * 1024 * 1024
 MAX_PLUGIN_EXTRACTED_BYTES = 25 * 1024 * 1024
 MAX_PLUGIN_FILES = 256
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+PLUGIN_DB_FILENAME = "plugin_db.json"
+_SANDBOXES: dict[str, PluginSandbox] = {}
 
 
 class PluginValidationError(ValueError):
@@ -32,6 +33,33 @@ class PluginDiscovery:
     errors: list[str]
 
 
+def _plugin_db_path(plugins_dir: Path) -> Path:
+    return plugins_dir / PLUGIN_DB_FILENAME
+
+
+def _load_plugin_db(plugins_dir: Path) -> dict[str, bool]:
+    try:
+        return json.loads(_plugin_db_path(plugins_dir).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_plugin_db(plugins_dir: Path, db: dict[str, bool]) -> None:
+    path = _plugin_db_path(plugins_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(db, indent=2) + "\n")
+
+
+def _is_plugin_enabled(plugins_dir: Path, key: str) -> bool:
+    return _load_plugin_db(plugins_dir).get(key, True)
+
+
+def set_plugin_enabled(plugins_dir: Path, key: str, enabled: bool) -> None:
+    db = _load_plugin_db(plugins_dir)
+    db[key] = enabled
+    _save_plugin_db(plugins_dir, db)
+
+
 def discover_plugins(directory: Path) -> PluginDiscovery:
     if not directory.exists():
         return PluginDiscovery(plugins=[], errors=[])
@@ -41,10 +69,15 @@ def discover_plugins(directory: Path) -> PluginDiscovery:
     for child in sorted(directory.iterdir(), key=lambda path: path.name):
         if child.name.startswith(".") or not child.is_dir():
             continue
+        if not _is_plugin_enabled(directory, child.name):
+            errors.append(f"{child.name}: disabled")
+            continue
         try:
             plugins.append(load_plugin_directory(child))
         except PluginValidationError as exc:
             errors.append(f"{child.name}: {exc}")
+        except Exception as exc:
+            errors.append(f"{child.name}: unexpected error: {exc}")
     return PluginDiscovery(plugins=plugins, errors=errors)
 
 
@@ -53,7 +86,7 @@ def load_plugin_directory(root: Path) -> GamePlugin:
     manifest_path = _manifest_path(root)
     manifest = parse_manifest(manifest_path.read_text(encoding="utf-8"))
     info = _info_from_manifest(manifest)
-    factory = _factory_from_manifest(root, manifest, info)
+    factory = _sandboxed_factory_from_manifest(root, manifest, info)
     frontend_path = _frontend_path(root, manifest)
     return GamePlugin(
         info=info,
@@ -87,11 +120,10 @@ def install_plugin_zip(data: bytes, plugins_dir: Path) -> GamePlugin:
                 with archive.open(member) as source, target.open("wb") as dest:
                     shutil.copyfileobj(source, dest)
 
-        plugin = load_plugin_directory(temp_dir)
-        if plugin.info.key != info.key:
-            raise PluginValidationError("Manifest key changed during extraction.")
+        _validate_entrypoint(temp_dir, manifest, info)
 
-        target_dir = plugins_root / plugin.info.key
+        manifest_key = info.key
+        target_dir = plugins_root / manifest_key
         if target_dir.exists():
             shutil.rmtree(target_dir)
         temp_dir.rename(target_dir)
@@ -102,7 +134,12 @@ def install_plugin_zip(data: bytes, plugins_dir: Path) -> GamePlugin:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
 
-    return load_plugin_directory(target_dir)
+    plugin = load_plugin_directory(target_dir)
+    if plugin.info.key != manifest_key:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise PluginValidationError("Manifest key changed during extraction.")
+    set_plugin_enabled(plugins_root, plugin.info.key, True)
+    return plugin
 
 
 def parse_manifest(text: str) -> dict[str, Any]:
@@ -151,11 +188,50 @@ def _info_from_manifest(manifest: dict[str, Any]) -> GameInfo:
     )
 
 
-def _factory_from_manifest(
+def _sandboxed_factory_from_manifest(
     root: Path,
     manifest: dict[str, Any],
     info: GameInfo,
-) -> GameFactory:
+) -> SandboxedFactory:
+    _validate_entrypoint(root, manifest, info)
+    sandbox = _get_sandbox(info.key, root)
+    try:
+        sandbox.call("ping")
+    except SandboxError as exc:
+        raise PluginValidationError(f"Plugin sandbox validation failed: {exc}") from exc
+    return SandboxedFactory(sandbox=sandbox, info=info)
+
+
+def _get_sandbox(key: str, root: Path) -> PluginSandbox:
+    if key in _SANDBOXES:
+        old = _SANDBOXES[key]
+        try:
+            old.close()
+        except Exception:  # nosec B110
+            pass
+    sandbox = PluginSandbox(root)
+    try:
+        sandbox.start()
+    except SandboxError as exc:
+        raise PluginValidationError(f"Failed to start plugin sandbox: {exc}") from exc
+    _SANDBOXES[key] = sandbox
+    return sandbox
+
+
+def close_all_sandboxes() -> None:
+    for key, sandbox in list(_SANDBOXES.items()):
+        try:
+            sandbox.close()
+        except Exception:  # nosec B110
+            pass
+    _SANDBOXES.clear()
+
+
+def _validate_entrypoint(
+    root: Path,
+    manifest: dict[str, Any],
+    info: GameInfo,
+) -> tuple[str, str]:
     entrypoint = str(manifest.get("entrypoint", "")).strip()
     if entrypoint:
         module_name, separator, symbol = entrypoint.partition(":")
@@ -172,41 +248,7 @@ def _factory_from_manifest(
     if not module_path.is_relative_to(root) or not module_path.is_file():
         raise PluginValidationError(f"Missing plugin module: {module_name}.")
 
-    loaded_name = f"_bmo_game_plugin_{info.key}_{uuid4().hex}"
-    spec = importlib.util.spec_from_file_location(loaded_name, module_path)
-    if spec is None or spec.loader is None:
-        raise PluginValidationError(f"Could not load plugin module: {module_name}.")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[loaded_name] = module
-    sys.path.insert(0, str(root))
-    try:
-        spec.loader.exec_module(module)
-    except Exception as exc:
-        raise PluginValidationError(f"Plugin module failed to import: {exc}") from exc
-    finally:
-        try:
-            sys.path.remove(str(root))
-        except ValueError:
-            pass
-
-    try:
-        candidate = getattr(module, symbol)
-    except AttributeError as exc:
-        raise PluginValidationError(f"Missing plugin factory: {symbol}.") from exc
-
-    if isinstance(candidate, type):
-        factory = candidate()
-    elif callable(candidate) and not _looks_like_factory(candidate):
-        factory = candidate()
-    else:
-        factory = candidate
-
-    if not _looks_like_factory(factory):
-        raise PluginValidationError(
-            "Plugin factory must expose create(players) and load(state)."
-        )
-    return factory
+    return module_name, symbol
 
 
 def _frontend_path(root: Path, manifest: dict[str, Any]) -> Path | None:

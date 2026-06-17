@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import re
-from dataclasses import replace
 from typing import Type
 
 from maubot import MessageEvent, Plugin
@@ -35,9 +35,33 @@ class BMO(Plugin):
         synced, message = await self._sync_games()
         if not synced:
             self.log.warning(message)
+        self._sync_task = asyncio.create_task(self._periodic_sync())
 
     async def stop(self) -> None:
+        task = getattr(self, "_sync_task", None)
+        if task:
+            task.cancel()
         await self.web.close()
+
+    async def _periodic_sync(self) -> None:
+        try:
+            while True:
+                interval = self._sync_interval_seconds()
+                if interval <= 0:
+                    return
+                await asyncio.sleep(interval)
+                synced, message = await self._sync_games()
+                if not synced:
+                    self.log.warning(message)
+        except asyncio.CancelledError:
+            pass
+
+    def _sync_interval_seconds(self) -> float:
+        try:
+            minutes = float(self.config["sync_interval_minutes"])
+        except (TypeError, ValueError, KeyError):
+            return 0.0
+        return minutes * 60
 
     def _format_html(self, text: str) -> str:
         lines = text.split("\n")
@@ -114,43 +138,8 @@ class BMO(Plugin):
                 return False, "BMO web returned no games; using cached catalog."
             return False, "BMO web returned no games."
 
-        self.games = {
-            game.key: self._apply_game_overrides(game)
-            for game in games
-        }
+        self.games = {game.key: game for game in games}
         return True, f"Synced {len(self.games)} BMO game(s)."
-
-    def _apply_game_overrides(self, game: GameInfo) -> GameInfo:
-        overrides = self._mapping_config("game_overrides").get(game.key, {})
-        if not isinstance(overrides, dict):
-            overrides = {}
-
-        min_players = max(
-            game.min_players,
-            _optional_int(
-                self._mapping_config("min_players").get(game.key),
-                game.min_players,
-            ),
-        )
-        max_players = _optional_int(overrides.get("max_players"), game.max_players)
-        private_links = _optional_bool(
-            overrides.get("private_player_links"),
-            game.private_player_links,
-        )
-        return replace(
-            game,
-            title=str(overrides.get("title", game.title)),
-            description=str(overrides.get("description", game.description)),
-            min_players=min_players,
-            max_players=max_players,
-            private_player_links=private_links,
-        )
-
-    def _mapping_config(self, key: str) -> dict[str, object]:
-        value = self.config[key]
-        if hasattr(value, "items"):
-            return dict(value.items())
-        return {}
 
     @command.new(name=command_name, help="Show BMO game commands", require_subcommand=False)
     async def bmo(self, evt: MessageEvent) -> None:
@@ -268,7 +257,7 @@ class BMO(Plugin):
                 self.lobbies.render_lobby(lobby),
             )
             await evt.reply(self._format_html(
-                f"🛑 Not enough players ready yet."
+                "🛑 Not enough players ready yet."
             ), allow_html=True)
             return
 
@@ -417,21 +406,3 @@ class BMO(Plugin):
             self.lobbies.render_lobby(lobby),
         )
 
-
-def _optional_int(value: object, default: int | None) -> int | None:
-    if value is None or value == "":
-        return default
-    return int(value)
-
-
-def _optional_bool(value: object, default: bool) -> bool:
-    if value is None or value == "":
-        return default
-    if isinstance(value, bool):
-        return value
-    lowered = str(value).lower().strip()
-    if lowered in {"1", "true", "yes", "on"}:
-        return True
-    if lowered in {"0", "false", "no", "off"}:
-        return False
-    return default

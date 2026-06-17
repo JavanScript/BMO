@@ -54,6 +54,40 @@ class WordleGameTest(unittest.TestCase):
         self.assertIn("CIDER", reply.message)
 
 
+class WordleSerializeTest(unittest.TestCase):
+    def test_hides_answer_while_in_progress(self) -> None:
+        game = WordleGame(answer="cider")
+        game.guess("@ada:example.org", "crane")
+
+        data = game.serialize_public()
+
+        self.assertFalse(data["ended"])
+        self.assertFalse(data["solved"])
+        self.assertIsNone(data["answer"])
+        self.assertEqual(len(data["rows"]), 1)
+        self.assertEqual(data["rows"][0]["guess"], "CRANE")
+
+    def test_reveals_answer_after_loss(self) -> None:
+        game = WordleGame(answer="cider")
+        for guess in ("adieu", "brave", "fjord", "glade", "honey", "karma"):
+            game.guess("@ada:example.org", guess)
+
+        data = game.serialize_public()
+
+        self.assertTrue(data["ended"])
+        self.assertFalse(data["solved"])
+        self.assertEqual(data["answer"], "CIDER")
+
+    def test_marks_solved_state(self) -> None:
+        game = WordleGame(answer="cider")
+        game.guess("@ada:example.org", "cider")
+
+        data = game.serialize_public()
+
+        self.assertTrue(data["solved"])
+        self.assertEqual(data["answer"], "CIDER")
+
+
 if __name__ == "__main__":
     unittest.main()
 
