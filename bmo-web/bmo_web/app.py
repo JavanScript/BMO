@@ -4,16 +4,22 @@ import asyncio
 import hmac
 import json
 import os
+import time
+import secrets
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from aiohttp import web
 
+from .games.debug import run_debug
 from .games.plugins import (
     MAX_PLUGIN_ZIP_BYTES,
     PluginValidationError,
+    _is_plugin_enabled,
+    close_all_sandboxes,
     discover_plugins,
     install_plugin_zip,
+    set_plugin_enabled,
 )
 from .games.registry import GameRegistry
 from .realtime import EventBroker
@@ -26,6 +32,9 @@ PLUGINS_DIR_KEY = web.AppKey("plugins_dir", Path)
 PLUGIN_ERRORS_KEY = web.AppKey("plugin_errors", list)
 ADMIN_PASSWORD_KEY = web.AppKey("admin_password", object)
 PLUGIN_UPLOADS_ENABLED_KEY = web.AppKey("plugin_uploads_enabled", bool)
+ADMIN_TOKENS_KEY = web.AppKey("admin_tokens", dict)
+ADMIN_TOKEN_TTL = 3600  # 1 hour
+SSE_HEARTBEAT_SECONDS = 25
 
 
 def create_app(
@@ -40,8 +49,10 @@ def create_app(
     if store is None:
         registry = GameRegistry.defaults()
         plugin_errors = _register_plugins(registry, plugin_root)
+        shared_secret = os.environ.get("BMO_SHARED_SECRET", "change-me")
+        _warn_default_secret(shared_secret)
         store = SessionStore(
-            shared_secret=os.environ.get("BMO_SHARED_SECRET", "change-me"),
+            shared_secret=shared_secret,
             public_base_url=os.environ.get(
                 "BMO_PUBLIC_BASE_URL",
                 "http://localhost:8000",
@@ -64,15 +75,20 @@ def create_app(
         if enable_plugin_uploads is None
         else enable_plugin_uploads
     )
+    app[ADMIN_TOKENS_KEY] = {}
     app.router.add_get("/api/games", list_games)
     app.router.add_post("/api/sessions", create_session)
     app.router.add_get("/api/sessions/{session_id}", get_session)
     app.router.add_post("/api/sessions/{session_id}/actions", submit_action)
-    app.router.add_post("/api/sessions/{session_id}/guess", submit_guess)
     app.router.add_get("/api/sessions/{session_id}/events", session_events)
+    app.router.add_post("/api/admin/login", admin_login)
+    app.router.add_post("/api/admin/logout", admin_logout)
     app.router.add_get("/api/admin/summary", admin_summary)
     app.router.add_post("/api/admin/plugins/upload", admin_upload_plugin)
     app.router.add_post("/api/admin/plugins/reload", admin_reload_plugins)
+    app.router.add_post("/api/admin/plugins/{key}/enable", admin_enable_plugin)
+    app.router.add_post("/api/admin/plugins/{key}/disable", admin_disable_plugin)
+    app.router.add_post("/api/admin/debug/play", admin_debug_play)
     app.router.add_get("/admin", admin_redirect)
     app.router.add_get("/admin/", admin_page)
     app.router.add_get("/game/{game_key}/", game_frontend_resource)
@@ -95,16 +111,23 @@ async def list_games(request: web.Request) -> web.Response:
 
 async def create_session(request: web.Request) -> web.Response:
     store = request.app[STORE_KEY]
-    if request.headers.get("X-BMO-Secret") != store.shared_secret:
+    provided = request.headers.get("X-BMO-Secret", "")
+    if not hmac.compare_digest(provided, store.shared_secret):
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    display_names = body.get("display_names", {})
     try:
         session = store.create_session(
             game_key=body["game"],
             lobby_id=body["lobby_id"],
             room_id=body["room_id"],
             players=body.get("players", []),
+            display_names=display_names,
             public_base_url=body.get("public_base_url"),
         )
     except (KeyError, ValueError) as exc:
@@ -140,15 +163,6 @@ async def submit_action(request: web.Request) -> web.Response:
         request,
         action=str(body.get("action", "")),
         payload=payload,
-    )
-
-
-async def submit_guess(request: web.Request) -> web.Response:
-    body = await request.json()
-    return await _submit_action(
-        request,
-        action="guess",
-        payload={"guess": body.get("guess", "")},
     )
 
 
@@ -208,7 +222,11 @@ async def session_events(request: web.Request) -> web.StreamResponse:
 
     try:
         while True:
-            await queue.get()
+            try:
+                await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                await response.write(b": keepalive\n\n")
+                continue
             current_session = store.get(session.session_id)
             if not current_session:
                 break
@@ -349,6 +367,80 @@ async def admin_reload_plugins(request: web.Request) -> web.Response:
     )
 
 
+async def admin_debug_play(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    body = await request.json() if request.can_read_body else {}
+    game_key = str(body.get("game", ""))
+    if not game_key:
+        return web.json_response({"error": "game key required"}, status=400)
+    try:
+        info = store.registry.info(game_key)
+        factory = store.registry.get_factory(game_key)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    players = [f"@debug-{i}" for i in range(info.min_players)]
+    loop = asyncio.get_running_loop()
+    log = await loop.run_in_executor(None, run_debug, factory, players)
+    return web.json_response({
+        "game_key": game_key,
+        "players": players,
+        "steps": len(log),
+        "result": log[-1] if log else None,
+    })
+
+
+async def admin_enable_plugin(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    key = request.match_info["key"]
+    set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, True)
+    errors = _reload_plugins(request.app)
+    return web.json_response({"ok": True, "plugin_errors": errors, "summary": _admin_summary(request.app, store)})
+
+
+async def admin_disable_plugin(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    key = request.match_info["key"]
+    set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, False)
+    errors = _reload_plugins(request.app)
+    return web.json_response({"ok": True, "plugin_errors": errors, "summary": _admin_summary(request.app, store)})
+
+
+async def admin_login(request: web.Request) -> web.Response:
+    body = await request.json()
+    password = str(body.get("password", ""))
+    if not password:
+        return web.json_response({"error": "password required"}, status=400)
+
+    store = request.app[STORE_KEY]
+    admin_password = str(request.app[ADMIN_PASSWORD_KEY] or "")
+    tokens = request.app[ADMIN_TOKENS_KEY]
+
+    valid = False
+    if admin_password and hmac.compare_digest(password, admin_password):
+        valid = True
+    elif not admin_password and hmac.compare_digest(password, store.shared_secret):
+        valid = True
+
+    if not valid:
+        return web.json_response({"error": "invalid password"}, status=401)
+
+    now = time.time()
+    _prune_admin_tokens(tokens, now)
+    token = secrets.token_urlsafe(32)
+    tokens[token] = now + ADMIN_TOKEN_TTL
+    return web.json_response({"token": token})
+
+
+async def admin_logout(request: web.Request) -> web.Response:
+    tokens = request.app[ADMIN_TOKENS_KEY]
+    token = request.headers.get("X-BMO-Admin-Token", "")
+    tokens.pop(token, None)
+    return web.json_response({"ok": True})
+
+
 def _authorized_session(
     request: web.Request,
     store: SessionStore,
@@ -402,6 +494,7 @@ def _register_plugins(registry: GameRegistry, plugins_dir: Path) -> list[str]:
 
 def _reload_plugins(app: web.Application) -> list[str]:
     store = app[STORE_KEY]
+    close_all_sandboxes()
     registry = GameRegistry.defaults()
     errors = _register_plugins(registry, app[PLUGINS_DIR_KEY])
     store.replace_registry(registry)
@@ -413,16 +506,21 @@ def _admin_summary(
     app: web.Application,
     store: SessionStore,
 ) -> dict[str, object]:
+    plugins_dir = app[PLUGINS_DIR_KEY]
+    games = []
+    for info in store.registry.list_games():
+        d = info.to_public_dict()
+        if info.source == "plugin":
+            d["enabled"] = _is_plugin_enabled(plugins_dir, info.key)
+        else:
+            d["enabled"] = True
+        games.append(d)
     return {
-        "games": [
-            info.to_public_dict()
-            for info in store.registry.list_games()
-        ],
+        "games": games,
         "sessions": store.list_sessions(limit=50),
         "config": {
             "public_base_url": store.public_base_url,
-            "db_path": store.db_path,
-            "plugins_dir": str(app[PLUGINS_DIR_KEY]),
+            "plugins_dir": str(plugins_dir),
             "plugin_uploads_enabled": bool(app[PLUGIN_UPLOADS_ENABLED_KEY]),
             "admin_password_configured": bool(app[ADMIN_PASSWORD_KEY]),
         },
@@ -430,26 +528,36 @@ def _admin_summary(
     }
 
 
+def _prune_admin_tokens(tokens: dict[str, float], now: float) -> None:
+    expired = [token for token, expiry in tokens.items() if expiry <= now]
+    for token in expired:
+        tokens.pop(token, None)
+
+
 def _require_admin(request: web.Request, store: SessionStore) -> None:
+    tokens = request.app.get(ADMIN_TOKENS_KEY, {})
+    now = time.time()
+    token = request.headers.get("X-BMO-Admin-Token", "")
+    expiry = tokens.get(token, 0)
+    if expiry > now:
+        return
+    _prune_admin_tokens(tokens, now)
+
     admin_password = str(request.app[ADMIN_PASSWORD_KEY] or "")
     provided_admin = request.headers.get("X-BMO-Admin", "")
     provided_secret = request.headers.get("X-BMO-Secret", "")
 
-    if provided_secret and hmac_compare(provided_secret, store.shared_secret):
+    if provided_secret and hmac.compare_digest(provided_secret, store.shared_secret):
         return
-    if admin_password and hmac_compare(provided_admin, admin_password):
+    if admin_password and hmac.compare_digest(provided_admin, admin_password):
         return
-    if not admin_password and hmac_compare(provided_admin, store.shared_secret):
+    if not admin_password and hmac.compare_digest(provided_admin, store.shared_secret):
         return
 
     raise web.HTTPUnauthorized(
         text=json.dumps({"error": "unauthorized"}),
         content_type="application/json",
     )
-
-
-def hmac_compare(left: str, right: str) -> bool:
-    return hmac.compare_digest(left, right)
 
 
 async def _read_upload(field: Any) -> bytes:
@@ -499,6 +607,16 @@ def _truthy(value: str) -> bool:
     return value.lower().strip() in {"1", "true", "yes", "on"}
 
 
+def _warn_default_secret(secret: str) -> None:
+    if secret == "change-me":
+        import warnings
+        warnings.warn(
+            "BMO_SHARED_SECRET is set to the default value 'change-me'. "
+            "This is insecure for production. Set a unique secret via "
+            "the BMO_SHARED_SECRET environment variable."
+        )
+
+
 def _admin_html() -> str:
     return """<!doctype html>
 <html lang="en">
@@ -508,193 +626,441 @@ def _admin_html() -> str:
   <title>BMO Admin</title>
   <style>
     :root {
-      color-scheme: light;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
-        BlinkMacSystemFont, sans-serif;
-      background: #f5f7fb;
-      color: #17202f;
+      color-scheme: light dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+      --bg-primary: #f2f2f7;
+      --bg-elevated: rgba(255, 255, 255, .8);
+      --bg-card: #ffffff;
+      --bg-fill: rgba(120, 120, 128, .08);
+      --bg-fill-strong: rgba(120, 120, 128, .14);
+      --separator: rgba(60, 60, 67, .12);
+      --separator-opaque: #d1d1d6;
+      --text-primary: #1c1c1e;
+      --text-secondary: #6c6c70;
+      --text-tertiary: #aeaeb2;
+      --accent: #007aff;
+      --accent-hover: #0a84ff;
+      --danger: #ff3b30;
+      --success: #34c759;
+      --warning: #ff9500;
+      --shadow: 0 1px 3px rgba(0, 0, 0, .06), 0 8px 24px rgba(0, 0, 0, .06);
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
     }
-    * {
-      box-sizing: border-box;
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #000000;
+        --bg-elevated: rgba(28, 28, 30, .8);
+        --bg-card: #1c1c1e;
+        --bg-fill: rgba(120, 120, 128, .18);
+        --bg-fill-strong: rgba(120, 120, 128, .28);
+        --separator: rgba(84, 84, 88, .4);
+        --separator-opaque: #38383a;
+        --text-primary: #ffffff;
+        --text-secondary: #98989f;
+        --text-tertiary: #6c6c70;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --danger: #ff453a;
+        --success: #30d158;
+        --warning: #ff9f0a;
+        --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .5);
+      }
     }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      background: #f5f7fb;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -.01em;
     }
     main {
-      width: min(1120px, calc(100vw - 28px));
+      width: min(1040px, calc(100vw - 32px));
       margin: 0 auto;
-      padding: 24px 0 36px;
+      padding: 0 0 48px;
+    }
+    .login-screen {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .login-card {
+      width: min(360px, 100%);
+      padding: 32px 28px;
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .login-card h1 {
+      margin: 0 0 6px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .login-card .subtitle {
+      margin: 0 0 24px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+    .login-card .error {
+      color: var(--danger);
+      font-size: 13px;
+      margin: 12px 0 0;
+      min-height: 18px;
     }
     header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
-      margin-bottom: 18px;
+      margin: 0 -16px 8px;
+      padding: 16px;
+      background: var(--bg-elevated);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: .5px solid var(--separator);
     }
-    h1 {
+    .header-left h1 {
       margin: 0;
-      font-size: 28px;
-      letter-spacing: 0;
+      font-size: 22px;
+      font-weight: 700;
     }
+    .header-left div {
+      color: var(--text-secondary);
+      font-size: 13px;
+      margin-top: 1px;
+    }
+    h1 { margin: 0; font-size: 22px; font-weight: 700; }
     h2 {
-      margin: 0 0 10px;
-      font-size: 17px;
-      letter-spacing: 0;
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--text-secondary);
     }
-    button,
-    input {
-      min-height: 40px;
-      border-radius: 6px;
-      border: 1px solid #b7c2d4;
+    button, input {
+      min-height: 38px;
+      border-radius: var(--radius-sm);
+      border: none;
       font: inherit;
+      letter-spacing: -.01em;
+      background: transparent;
+      color: var(--text-primary);
     }
     button {
-      padding: 0 14px;
-      background: #1b6ed6;
-      color: white;
-      font-weight: 800;
+      padding: 0 18px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
       cursor: pointer;
+      transition: background .15s, transform .08s, opacity .15s;
+    }
+    button:hover { background: var(--accent-hover); }
+    button:active { transform: scale(.97); }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
     button.secondary {
-      background: #eef3fa;
-      color: #17202f;
+      background: var(--bg-fill);
+      color: var(--accent);
     }
-    input[type="password"] {
-      width: min(360px, 100%);
-      padding: 0 12px;
-      background: white;
-      color: #17202f;
+    button.secondary:hover { background: var(--bg-fill-strong); }
+    button.danger {
+      background: var(--bg-fill);
+      color: var(--danger);
     }
-    input[type="file"] {
-      padding: 7px;
-      background: white;
+    button.danger:hover { background: rgba(255, 59, 48, .14); }
+    input {
+      width: 100%;
+      padding: 0 14px;
+      background: var(--bg-fill);
+      outline: none;
+      transition: box-shadow .15s;
     }
+    input::placeholder { color: var(--text-tertiary); }
+    input:focus { box-shadow: 0 0 0 3.5px rgba(0, 122, 255, .3); }
+    input[type="file"] { padding: 8px; }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
     section {
-      border-top: 1px solid #d7deea;
-      padding: 18px 0;
+      margin-top: 24px;
     }
-    .auth,
     .tools {
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
       align-items: center;
     }
+    .upload-zone {
+      flex: 1;
+      min-width: 240px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border: 1.5px dashed var(--separator-opaque);
+      border-radius: var(--radius-md);
+      background: var(--bg-card);
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-secondary);
+      transition: border-color .15s, background .15s;
+    }
+    .upload-zone:hover { border-color: var(--accent); }
+    .upload-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(0, 122, 255, .08);
+    }
     .grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1fr 1fr;
       gap: 16px;
     }
-    .table {
-      width: 100%;
-      border-collapse: collapse;
-      background: white;
-      border: 1px solid #d7deea;
-      border-radius: 8px;
+    .card {
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+    }
+    .table-wrap {
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
       overflow: hidden;
     }
-    th,
-    td {
-      padding: 10px;
-      border-bottom: 1px solid #e5ebf3;
-      text-align: left;
-      vertical-align: top;
+    .table-scroll { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
       font-size: 14px;
     }
+    th, td {
+      padding: 13px 16px;
+      border-bottom: .5px solid var(--separator);
+      text-align: left;
+      vertical-align: middle;
+    }
+    tbody tr:last-child td { border-bottom: none; }
     th {
-      background: #eef3fa;
       font-size: 12px;
+      font-weight: 600;
       text-transform: uppercase;
+      letter-spacing: .03em;
+      color: var(--text-secondary);
     }
+    tbody tr { transition: background .12s; }
+    tbody tr:hover td { background: var(--bg-fill); }
+    td:first-child { font-variant-numeric: tabular-nums; }
     pre {
-      min-height: 120px;
+      margin: 0;
+      min-height: 80px;
       overflow: auto;
-      padding: 12px;
-      border: 1px solid #d7deea;
-      border-radius: 8px;
-      background: #17202f;
-      color: #edf3ff;
+      padding: 16px;
+      border-radius: var(--radius-md);
+      background: var(--bg-fill);
+      color: var(--text-primary);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12.5px;
+      line-height: 1.55;
     }
-    .muted {
-      color: #607086;
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--bg-fill-strong);
+      color: var(--text-secondary);
     }
-    .error {
-      color: #b42335;
-      font-weight: 800;
+    .badge-yes { background: rgba(52, 199, 89, .18); color: var(--success); }
+    .badge-no { background: rgba(255, 59, 48, .16); color: var(--danger); }
+    .muted { color: var(--text-secondary); }
+    .error { color: var(--danger); font-weight: 600; }
+    .success { color: var(--success); font-weight: 600; }
+    .spinner {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid var(--separator);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display: none !important; }
+    .progress-bar {
+      width: 100%;
+      height: 5px;
+      background: var(--bg-fill-strong);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 10px 0;
+    }
+    .progress-bar div {
+      height: 100%;
+      background: var(--accent);
+      width: 0;
+      border-radius: 999px;
+      transition: width .2s;
     }
     @media (max-width: 760px) {
-      header,
-      .grid {
-        display: block;
-      }
-      .tools {
-        margin-top: 12px;
-      }
+      .grid { grid-template-columns: 1fr; }
+      header { margin: 0 -16px 8px; }
     }
   </style>
 </head>
 <body>
-  <main>
-    <header>
-      <div>
-        <h1>BMO Admin</h1>
-        <div id="status" class="muted">Locked</div>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1>BMO Admin</h1>
+      <p class="subtitle">Sign in to manage games and plugins</p>
+      <input id="login-password" type="password" autocomplete="current-password"
+        placeholder="Admin password">
+      <div class="btn-row" style="margin-top:16px">
+        <button id="login-btn" style="flex:1">Unlock</button>
       </div>
-      <div class="auth">
-        <input id="secret" type="password" autocomplete="current-password"
-          placeholder="Admin password or shared secret">
-        <button id="load">Unlock</button>
+      <p id="login-error" class="error"></p>
+    </div>
+  </div>
+
+  <main id="dashboard" class="hidden">
+    <header>
+      <div class="header-left">
+        <h1>BMO Admin</h1>
+        <div id="status">Disconnected</div>
+      </div>
+      <div class="btn-row">
+        <span id="session-info" class="muted" style="font-size:13px"></span>
+        <button id="logout-btn" class="danger">Logout</button>
       </div>
     </header>
 
     <section>
+      <h2>Tools</h2>
       <div class="tools">
-        <button id="reload" class="secondary">Reload Plugins</button>
-        <form id="upload-form" class="tools">
-          <input id="plugin-file" name="plugin" type="file" accept=".zip">
-          <button>Upload Plugin</button>
-        </form>
+        <button id="reload-btn" class="secondary">Reload Plugins</button>
+        <div class="upload-zone" id="upload-zone">
+          <span>📦</span>
+          <span id="upload-label">Drop plugin zip here or click to browse</span>
+          <input id="plugin-file" type="file" accept=".zip" hidden>
+        </div>
       </div>
-      <p id="upload-note" class="muted"></p>
+      <div id="progress-wrap" class="hidden">
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+      </div>
+      <p id="upload-note" class="muted" style="margin:8px 0 0"></p>
+      <p id="debug-note" class="muted" style="margin:8px 0 0"></p>
+    </section>
+
+    <section>
+      <h2>Games</h2>
+      <div id="games"><div class="spinner"></div></div>
+    </section>
+
+    <section>
+      <h2>Recent Sessions</h2>
+      <div id="sessions"><div class="spinner"></div></div>
     </section>
 
     <div class="grid">
       <section>
-        <h2>Games</h2>
-        <div id="games"></div>
+        <h2>Config</h2>
+        <div class="card"><pre id="config">Loading...</pre></div>
       </section>
       <section>
-        <h2>Config</h2>
-        <pre id="config">No data loaded.</pre>
+        <h2>Plugin Errors</h2>
+        <div class="card"><pre id="errors">Loading...</pre></div>
       </section>
     </div>
-
-    <section>
-      <h2>Recent Sessions</h2>
-      <div id="sessions"></div>
-    </section>
-
-    <section>
-      <h2>Plugin Errors</h2>
-      <pre id="errors">No data loaded.</pre>
-    </section>
   </main>
+
   <script>
-    const secret = document.querySelector("#secret");
+    let adminToken = localStorage.getItem("bmo_admin_token") || "";
+    const loginScreen = document.querySelector("#login-screen");
+    const dashboard = document.querySelector("#dashboard");
+    const loginPassword = document.querySelector("#login-password");
+    const loginBtn = document.querySelector("#login-btn");
+    const loginError = document.querySelector("#login-error");
     const statusEl = document.querySelector("#status");
+    const sessionInfo = document.querySelector("#session-info");
+    const logoutBtn = document.querySelector("#logout-btn");
+    const reloadBtn = document.querySelector("#reload-btn");
     const gamesEl = document.querySelector("#games");
     const sessionsEl = document.querySelector("#sessions");
     const configEl = document.querySelector("#config");
     const errorsEl = document.querySelector("#errors");
     const uploadNote = document.querySelector("#upload-note");
-    const uploadForm = document.querySelector("#upload-form");
+    const uploadZone = document.querySelector("#upload-zone");
     const pluginFile = document.querySelector("#plugin-file");
+    const progressWrap = document.querySelector("#progress-wrap");
+    const progressFill = document.querySelector("#progress-fill");
+    const debugNote = document.querySelector("#debug-note");
 
-    function headers() {
-      return { "X-BMO-Admin": secret.value };
+    function apiHeaders() {
+      const h = { "Content-Type": "application/json" };
+      if (adminToken) h["X-BMO-Admin-Token"] = adminToken;
+      return h;
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { headers: { ...apiHeaders(), ...opts.headers }, ...opts });
+      if (res.status === 401) { adminToken = ""; localStorage.removeItem("bmo_admin_token"); showLogin(); }
+      return res;
+    }
+
+    function showLogin() {
+      loginScreen.classList.remove("hidden");
+      dashboard.classList.add("hidden");
+      loginPassword.value = "";
+      loginError.textContent = "";
+    }
+
+    function showDashboard() {
+      loginScreen.classList.add("hidden");
+      dashboard.classList.remove("hidden");
+    }
+
+    async function doLogin() {
+      const password = loginPassword.value;
+      if (!password) return;
+      loginBtn.disabled = true;
+      loginError.textContent = "";
+      try {
+        const res = await fetch("/api/admin/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password }),
+        });
+        const data = await res.json();
+        if (!res.ok) { loginError.textContent = data.error || "Login failed."; return; }
+        adminToken = data.token;
+        localStorage.setItem("bmo_admin_token", adminToken);
+        showDashboard();
+        loadSummary();
+      } catch (e) {
+        loginError.textContent = "Connection error.";
+      } finally {
+        loginBtn.disabled = false;
+      }
+    }
+
+    async function doLogout() {
+      await fetch("/api/admin/logout", { method: "POST", headers: { "X-BMO-Admin-Token": adminToken } });
+      adminToken = "";
+      localStorage.removeItem("bmo_admin_token");
+      showLogin();
     }
 
     function cell(text) {
@@ -703,52 +1069,119 @@ def _admin_html() -> str:
       return td;
     }
 
-    function table(columns, rows) {
-      const tableEl = document.createElement("table");
-      tableEl.className = "table";
+    function badge(val, yesText, noText) {
+      const span = document.createElement("span");
+      span.className = `badge badge-${val ? "yes" : "no"}`;
+      span.textContent = val ? (yesText || "yes") : (noText || "no");
+      return span;
+    }
+
+    function table(columns, rows, renderRow) {
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      const scroll = document.createElement("div");
+      scroll.className = "table-scroll";
+      const t = document.createElement("table");
       const head = document.createElement("thead");
       const headRow = document.createElement("tr");
-      for (const column of columns) {
+      for (const col of columns) {
         const th = document.createElement("th");
-        th.textContent = column;
+        th.textContent = col;
         headRow.append(th);
       }
       head.append(headRow);
       const body = document.createElement("tbody");
       for (const row of rows) {
         const tr = document.createElement("tr");
-        row.forEach((value) => tr.append(cell(value)));
+        const vals = renderRow ? renderRow(row) : row;
+        vals.forEach((v) => {
+          if (v instanceof Node) { const td = document.createElement("td"); td.append(v); tr.append(td); }
+          else { tr.append(cell(v)); }
+        });
         body.append(tr);
       }
-      tableEl.append(head, body);
-      return tableEl;
+      t.append(head, body);
+      scroll.append(t);
+      wrap.append(scroll);
+      return wrap;
+    }
+
+    function shortId(id) {
+      return id.length > 12 ? id.slice(0, 12) + "..." : id;
     }
 
     function render(summary) {
       statusEl.textContent = "Connected";
       statusEl.className = "muted";
+
       uploadNote.textContent = summary.config.plugin_uploads_enabled
         ? "Plugin uploads execute trusted Python code from the zip."
         : "Uploads are disabled. Set BMO_ENABLE_PLUGIN_UPLOADS=1 to enable them.";
+
+      function actionBtn(text, cls, fn) {
+        const b = document.createElement("button");
+        b.textContent = text;
+        b.className = cls;
+        b.style.cssText = "padding:4px 8px;min-height:28px;font-size:11px";
+        b.addEventListener("click", fn);
+        return b;
+      }
+
       gamesEl.replaceChildren(table(
-        ["Key", "Title", "Players", "Private", "Source"],
-        summary.games.map((game) => [
-          game.key,
-          game.title,
-          `${game.min_players}-${game.max_players || "∞"}`,
-          game.private_player_links ? "yes" : "no",
-          game.source,
-        ])
+        ["Key", "Title", "Players", "Private", "Source", "Debug", ""],
+        summary.games,
+        (g) => {
+          const cells = [
+            g.key, g.title,
+            `${g.min_players}-${g.max_players || "∞"}`,
+            badge(g.private_player_links),
+            g.source,
+          ];
+          const debugBtn = actionBtn("Debug", "secondary", async () => {
+            debugBtn.disabled = true;
+            debugBtn.textContent = "Running...";
+            const res = await api("/api/admin/debug/play", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ game: g.key }),
+            });
+            const data = await res.json();
+            debugNote.textContent = res.ok
+              ? `${g.key}: ${data.steps} steps, ended=${!!(data.result && data.result.ended)}`
+              : data.error || "Debug failed";
+            debugNote.className = res.ok ? "success" : "error";
+            debugBtn.disabled = false;
+            debugBtn.textContent = "Debug";
+          });
+          cells.push(debugBtn);
+          if (g.source === "plugin") {
+            const toggleBtn = actionBtn(g.enabled ? "Disable" : "Enable", g.enabled ? "danger" : "secondary", async () => {
+              const action = g.enabled ? "disable" : "enable";
+              toggleBtn.disabled = true;
+              const res = await api(`/api/admin/plugins/${g.key}/${action}`, { method: "POST" });
+              const data = await res.json();
+              if (res.ok && data.summary) render(data.summary);
+              else toggleBtn.disabled = false;
+            });
+            cells.push(toggleBtn);
+          } else {
+            cells.push(badge(true, "builtin", ""));
+          }
+          return cells;
+        }
       ));
+
       sessionsEl.replaceChildren(table(
         ["Session", "Game", "Players", "Updated"],
-        summary.sessions.map((session) => [
-          session.session_id,
-          session.game,
-          session.players.length,
-          session.updated_at,
-        ])
+        summary.sessions,
+        (s) => [
+          shortId(s.session_id),
+          s.game,
+          String(s.players.length),
+          String(s.updated_at || "").slice(0, 19).replace("T", " "),
+        ]
       ));
+
       configEl.textContent = JSON.stringify(summary.config, null, 2);
       errorsEl.textContent = summary.plugin_errors.length
         ? summary.plugin_errors.join("\\n")
@@ -756,49 +1189,82 @@ def _admin_html() -> str:
     }
 
     async function loadSummary() {
-      const res = await fetch("/api/admin/summary", { headers: headers() });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not load admin data.");
-      render(data);
-    }
-
-    document.querySelector("#load").addEventListener("click", async () => {
       try {
-        await loadSummary();
-      } catch (error) {
-        statusEl.textContent = error.message;
+        const res = await api("/api/admin/summary");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not load.");
+        render(data);
+      } catch (e) {
+        statusEl.textContent = e.message;
         statusEl.className = "error";
       }
+    }
+
+    loginBtn.addEventListener("click", doLogin);
+    loginPassword.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+    logoutBtn.addEventListener("click", doLogout);
+
+    reloadBtn.addEventListener("click", async () => {
+      reloadBtn.disabled = true;
+      try {
+        const res = await api("/api/admin/plugins/reload", { method: "POST" });
+        const data = await res.json();
+        if (res.ok && data.summary) render(data.summary);
+      } finally { reloadBtn.disabled = false; }
     });
 
-    document.querySelector("#reload").addEventListener("click", async () => {
-      const res = await fetch("/api/admin/plugins/reload", {
-        method: "POST",
-        headers: headers(),
-      });
-      const data = await res.json();
-      if (res.ok) render(data.summary);
+    uploadZone.addEventListener("click", () => pluginFile.click());
+    uploadZone.addEventListener("dragover", (e) => { e.preventDefault(); uploadZone.classList.add("dragover"); });
+    uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("dragover"));
+    uploadZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      uploadZone.classList.remove("dragover");
+      if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+    });
+    pluginFile.addEventListener("change", () => {
+      if (pluginFile.files.length) uploadFile(pluginFile.files[0]);
     });
 
-    uploadForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (!pluginFile.files.length) return;
-      const form = new FormData();
-      form.append("plugin", pluginFile.files[0]);
-      const res = await fetch("/api/admin/plugins/upload", {
-        method: "POST",
-        headers: headers(),
-        body: form,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        uploadNote.textContent = data.error || "Upload failed.";
-        uploadNote.className = "error";
-        return;
-      }
+    async function uploadFile(file) {
+      progressWrap.classList.remove("hidden");
+      progressFill.style.width = "0";
+      uploadNote.textContent = `Uploading ${file.name}...`;
       uploadNote.className = "muted";
-      render(data.summary);
-    });
+      const form = new FormData();
+      form.append("plugin", file);
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) progressFill.style.width = `${(e.loaded / e.total) * 100}%`;
+        });
+        const result = await new Promise((resolve, reject) => {
+          xhr.open("POST", "/api/admin/plugins/upload");
+          xhr.setRequestHeader("X-BMO-Admin-Token", adminToken);
+          xhr.onload = () => resolve({ ok: xhr.status < 400, data: JSON.parse(xhr.responseText || "{}") });
+          xhr.onerror = () => reject(new Error("Upload failed"));
+          xhr.send(form);
+        });
+        progressFill.style.width = "100%";
+        if (!result.ok) {
+          uploadNote.textContent = result.data.error || "Upload failed.";
+          uploadNote.className = "error";
+          return;
+        }
+        uploadNote.textContent = `Plugin "${result.data.game.title}" uploaded.`;
+        uploadNote.className = "success";
+        if (result.data.summary) render(result.data.summary);
+      } catch (e) {
+        uploadNote.textContent = e.message;
+        uploadNote.className = "error";
+      }
+    }
+
+    if (adminToken) {
+      showDashboard();
+      loadSummary();
+    } else {
+      showLogin();
+    }
   </script>
 </body>
 </html>"""
@@ -814,73 +1280,124 @@ def _wordle_html(session_id: str) -> str:
   <title>BMO Game</title>
   <style>
     :root {{
-      color-scheme: light dark;
+      color-scheme: dark;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system,
         BlinkMacSystemFont, sans-serif;
+      --exact: #2f9e6f;
+      --present: #c9a227;
+      --absent: #2a3f46;
     }}
+    * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       min-height: 100vh;
       display: grid;
-      place-items: center;
+      place-items: start center;
       background: #102025;
       color: #f7fbfb;
     }}
     main {{
-      width: min(680px, calc(100vw - 32px));
-      padding: 32px 0;
+      width: min(480px, calc(100vw - 32px));
+      padding: 28px 0 40px;
     }}
     h1 {{
-      margin: 0 0 16px;
+      margin: 0 0 4px;
       font-size: 28px;
       letter-spacing: 0;
+      text-align: center;
     }}
+    #identity {{
+      color: #9bc7c3;
+      overflow-wrap: anywhere;
+      text-align: center;
+      font-size: 13px;
+      margin: 0 0 4px;
+    }}
+    #players {{
+      color: #6f8f8d;
+      text-align: center;
+      font-size: 13px;
+      margin: 0 0 20px;
+    }}
+    #board {{
+      display: grid;
+      grid-template-rows: repeat(6, 1fr);
+      gap: 6px;
+      width: min(330px, 100%);
+      margin: 0 auto 20px;
+    }}
+    .row {{
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+    }}
+    .tile {{
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border: 2px solid #2a3f46;
+      border-radius: 6px;
+      font-size: 28px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #f7fbfb;
+      transition: background .2s, border-color .2s;
+    }}
+    .tile.filled {{ border-color: #45656b; }}
+    .tile.exact {{ background: var(--exact); border-color: var(--exact); }}
+    .tile.present {{ background: var(--present); border-color: var(--present); }}
+    .tile.absent {{ background: var(--absent); border-color: var(--absent); }}
     form {{
       display: flex;
       gap: 8px;
-      margin: 20px 0;
+      margin: 0 0 14px;
     }}
     input, button {{
-      min-height: 44px;
-      border-radius: 6px;
+      min-height: 48px;
+      border-radius: 8px;
       border: 1px solid #7aa7a5;
       font: inherit;
     }}
     input {{
       flex: 1;
       min-width: 0;
-      padding: 0 12px;
+      padding: 0 14px;
       background: #f7fbfb;
       color: #102025;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      font-weight: 700;
     }}
     button {{
-      padding: 0 16px;
+      padding: 0 20px;
       background: #f4c95d;
       color: #102025;
       font-weight: 700;
       cursor: pointer;
+      border: none;
+      transition: opacity .15s;
     }}
+    button:hover:not(:disabled) {{ opacity: .88; }}
     button:disabled, input:disabled {{
-      opacity: .6;
+      opacity: .5;
       cursor: not-allowed;
     }}
-    pre {{
-      min-height: 180px;
-      padding: 16px;
-      border: 1px solid #33575d;
+    #banner {{
+      min-height: 0;
+      text-align: center;
+      font-weight: 700;
       border-radius: 8px;
-      background: #172d33;
-      overflow: auto;
-      line-height: 1.7;
-      font-size: 18px;
+      padding: 0;
+      transition: padding .15s;
     }}
+    #banner.show {{ padding: 12px; margin-bottom: 12px; }}
+    #banner.win {{ background: rgba(47, 158, 111, .2); color: #6fe0a8; }}
+    #banner.lose {{ background: rgba(198, 40, 56, .18); color: #ff9ba6; }}
     #message {{
       color: #f4c95d;
-      min-height: 24px;
-    }}
-    #identity {{
-      color: #9bc7c3;
-      overflow-wrap: anywhere;
+      min-height: 22px;
+      text-align: center;
+      font-size: 14px;
     }}
   </style>
 </head>
@@ -889,12 +1406,14 @@ def _wordle_html(session_id: str) -> str:
     <h1>BMO Wordle</h1>
     <p id="identity"></p>
     <p id="players"></p>
-    <pre id="board">Loading...</pre>
+    <div id="banner"></div>
+    <div id="board" aria-label="Wordle board"></div>
     <form id="guess-form">
-      <input id="guess" maxlength="5" autocomplete="off" placeholder="crane">
+      <input id="guess" maxlength="5" autocomplete="off" autocapitalize="characters"
+        spellcheck="false" placeholder="guess" aria-label="Your guess">
       <button>Guess</button>
     </form>
-    <p id="message"></p>
+    <p id="message" role="status" aria-live="polite"></p>
   </main>
   <script>
     const sessionId = {session_json};
@@ -902,10 +1421,14 @@ def _wordle_html(session_id: str) -> str:
     const playerId = params.get("player_id") || "";
     const token = params.get("token") || "";
     const authQuery = new URLSearchParams({{ player_id: playerId, token }});
+    const WORD_LENGTH = 5;
+    const MAX_GUESSES = 6;
+    const MARK_CLASS = {{ EXACT: "exact", PRESENT: "present", ABSENT: "absent" }};
     const board = document.querySelector("#board");
     const players = document.querySelector("#players");
     const identity = document.querySelector("#identity");
     const message = document.querySelector("#message");
+    const banner = document.querySelector("#banner");
     const form = document.querySelector("#guess-form");
     const input = document.querySelector("#guess");
     const button = form.querySelector("button");
@@ -915,29 +1438,76 @@ def _wordle_html(session_id: str) -> str:
       button.disabled = disabled;
     }}
 
+    function renderBoard(rows, length) {{
+      board.replaceChildren();
+      const maxGuesses = MAX_GUESSES;
+      for (let r = 0; r < maxGuesses; r++) {{
+        const rowEl = document.createElement("div");
+        rowEl.className = "row";
+        const row = rows[r];
+        for (let c = 0; c < length; c++) {{
+          const tile = document.createElement("div");
+          tile.className = "tile";
+          if (row) {{
+            const letter = row.guess[c] || "";
+            tile.textContent = letter;
+            if (letter) tile.classList.add("filled");
+            const mark = row.marks[c];
+            if (mark) tile.classList.add(MARK_CLASS[mark] || "");
+          }}
+          rowEl.append(tile);
+        }}
+        board.append(rowEl);
+      }}
+    }}
+
+    function showBanner(text, kind) {{
+      banner.textContent = text;
+      banner.className = text ? `show ${{kind}}` : "";
+    }}
+
     function render(data) {{
-      board.textContent = data.board || "No guesses yet.";
-      players.textContent = `${{data.players.length}} player(s) from Matrix`;
+      const length = data.word_length || WORD_LENGTH;
+      renderBoard(data.rows || [], length);
+      input.maxLength = length;
+      const count = data.players ? data.players.length : 0;
+      players.textContent = `${{count}} player(s) from Matrix`;
       identity.textContent = data.player_id ? `Playing as ${{data.player_id}}` : "";
       if (data.ended) {{
         setDisabled(true);
+        if (data.solved) {{
+          showBanner(`Solved in ${{data.guess_count}}/${{data.max_guesses}}!`, "win");
+        }} else {{
+          showBanner(`The word was ${{data.answer || "?"}}.`, "lose");
+        }}
+      }} else {{
+        setDisabled(false);
+        showBanner("", "");
       }}
+    }}
+
+    function showLoadError(text) {{
+      renderBoard([], WORD_LENGTH);
+      message.textContent = text;
+      setDisabled(true);
     }}
 
     async function refresh() {{
       if (!playerId || !token) {{
-        board.textContent = "Open your signed player link from Matrix.";
-        setDisabled(true);
+        showLoadError("Open your signed player link from Matrix.");
         return;
       }}
-      const res = await fetch(`/api/sessions/${{sessionId}}?${{authQuery}}`);
-      const data = await res.json();
-      if (!res.ok) {{
-        board.textContent = data.error || "Could not load game.";
-        setDisabled(true);
-        return;
+      try {{
+        const res = await fetch(`/api/sessions/${{sessionId}}?${{authQuery}}`);
+        const data = await res.json();
+        if (!res.ok) {{
+          showLoadError(data.error || "Could not load game.");
+          return;
+        }}
+        render(data);
+      }} catch (e) {{
+        showLoadError("Connection error.");
       }}
-      render(data);
     }}
 
     function connectEvents() {{
@@ -951,17 +1521,24 @@ def _wordle_html(session_id: str) -> str:
     form.addEventListener("submit", async (event) => {{
       event.preventDefault();
       const guess = input.value.trim();
+      if (!guess) return;
+      message.textContent = "";
       input.value = "";
-      const res = await fetch(`/api/sessions/${{sessionId}}/actions?${{authQuery}}`, {{
-        method: "POST",
-        headers: {{ "Content-Type": "application/json" }},
-        body: JSON.stringify({{ action: "guess", payload: {{ guess }} }}),
-      }});
-      const data = await res.json();
-      message.textContent = data.error || data.message || "";
-      if (data.session) render(data.session);
+      try {{
+        const res = await fetch(`/api/sessions/${{sessionId}}/actions?${{authQuery}}`, {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ action: "guess", payload: {{ guess }} }}),
+        }});
+        const data = await res.json();
+        message.textContent = data.error || data.message || "";
+        if (data.session) render(data.session);
+      }} catch (e) {{
+        message.textContent = "Connection error.";
+      }}
     }});
 
+    renderBoard([], WORD_LENGTH);
     refresh();
     connectEvents();
   </script>
@@ -969,418 +1546,7 @@ def _wordle_html(session_id: str) -> str:
 </html>"""
 
 
-def _hokm_html_legacy(session_id: str) -> str:
-    session_json = json.dumps(session_id)
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BMO Hokm</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
-        BlinkMacSystemFont, sans-serif;
-      background: #0d2f25;
-      color: #f7f3e8;
-    }}
-    body {{
-      margin: 0;
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at top left, rgba(232, 184, 74, .16), transparent 34rem),
-        linear-gradient(135deg, #0d2f25 0%, #174537 54%, #421f2a 100%);
-    }}
-    main {{
-      width: min(1180px, calc(100vw - 28px));
-      margin: 0 auto;
-      padding: 24px 0 32px;
-    }}
-    h1 {{
-      margin: 0;
-      font-size: 30px;
-      letter-spacing: 0;
-    }}
-    button {{
-      min-height: 40px;
-      border: 1px solid rgba(247, 243, 232, .34);
-      border-radius: 7px;
-      font: inherit;
-      cursor: pointer;
-    }}
-    button:disabled {{
-      cursor: not-allowed;
-      opacity: .45;
-    }}
-    .topbar {{
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 18px;
-    }}
-    .identity {{
-      color: #d7c89e;
-      overflow-wrap: anywhere;
-      text-align: right;
-    }}
-    .table {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 320px;
-      gap: 14px;
-      align-items: start;
-    }}
-    .surface {{
-      min-height: 420px;
-      border: 1px solid rgba(247, 243, 232, .2);
-      border-radius: 8px;
-      background: rgba(9, 38, 30, .76);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04);
-      padding: 18px;
-    }}
-    .panel {{
-      border: 1px solid rgba(247, 243, 232, .2);
-      border-radius: 8px;
-      background: rgba(247, 243, 232, .08);
-      padding: 14px;
-      margin-bottom: 12px;
-    }}
-    .panel h2 {{
-      margin: 0 0 10px;
-      font-size: 16px;
-      letter-spacing: 0;
-    }}
-    .status {{
-      min-height: 28px;
-      color: #f2c766;
-      font-weight: 700;
-    }}
-    .teams {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-    }}
-    .team {{
-      border-radius: 8px;
-      background: rgba(255, 255, 255, .08);
-      padding: 10px;
-    }}
-    .team.active {{
-      outline: 2px solid #f2c766;
-    }}
-    .players {{
-      color: #d9decf;
-      overflow-wrap: anywhere;
-      font-size: 14px;
-      line-height: 1.45;
-    }}
-    .stats {{
-      display: flex;
-      gap: 12px;
-      margin-top: 8px;
-      color: #f7f3e8;
-      font-weight: 700;
-    }}
-    .trump-buttons {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }}
-    .trump-buttons button {{
-      min-width: 64px;
-      background: #f7f3e8;
-      color: #1d2a26;
-      font-size: 22px;
-      font-weight: 800;
-    }}
-    .trick {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(82px, 1fr));
-      gap: 10px;
-      margin-top: 18px;
-    }}
-    .play {{
-      min-height: 112px;
-      border: 1px dashed rgba(247, 243, 232, .28);
-      border-radius: 8px;
-      display: grid;
-      place-items: center;
-      padding: 8px;
-      text-align: center;
-      color: #d9decf;
-    }}
-    .play strong {{
-      display: block;
-      font-size: 34px;
-      margin-top: 4px;
-    }}
-    .hand {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
-      gap: 8px;
-      margin-top: 16px;
-    }}
-    .card {{
-      aspect-ratio: 5 / 7;
-      background: #fbfaf5;
-      color: #161b18;
-      border: 1px solid #d8d0bd;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, .22);
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 8px;
-      font-weight: 800;
-    }}
-    .card.red {{
-      color: #ba2636;
-    }}
-    .card span {{
-      align-self: flex-start;
-      font-size: 18px;
-    }}
-    .card strong {{
-      align-self: center;
-      font-size: 34px;
-      line-height: 1;
-    }}
-    .log {{
-      color: #d9decf;
-      line-height: 1.45;
-      min-height: 44px;
-    }}
-    @media (max-width: 820px) {{
-      .table {{
-        grid-template-columns: 1fr;
-      }}
-      .topbar {{
-        display: block;
-      }}
-      .identity {{
-        text-align: left;
-        margin-top: 8px;
-      }}
-      .trick {{
-        grid-template-columns: repeat(2, minmax(82px, 1fr));
-      }}
-    }}
-  </style>
-</head>
-<body>
-  <main>
-    <div class="topbar">
-      <div>
-        <h1>Hokm / حکم</h1>
-        <div id="status" class="status">Loading...</div>
-      </div>
-      <div id="identity" class="identity"></div>
-    </div>
-    <div class="table">
-      <section class="surface">
-        <div id="teams" class="teams"></div>
-        <div id="trump-panel" class="panel" hidden>
-          <h2>Trump / حکم</h2>
-          <div id="trump-buttons" class="trump-buttons"></div>
-        </div>
-        <div class="trick" id="current-trick"></div>
-        <h2>Your hand / دست شما</h2>
-        <div id="hand" class="hand"></div>
-      </section>
-      <aside>
-        <div class="panel">
-          <h2>Table / میز</h2>
-          <div id="meta" class="log"></div>
-        </div>
-        <div class="panel">
-          <h2>Last hand / دست قبلی</h2>
-          <div id="last-hand" class="log"></div>
-        </div>
-        <div class="panel">
-          <h2>Message / پیام</h2>
-          <div id="message" class="log"></div>
-        </div>
-      </aside>
-    </div>
-  </main>
-  <script>
-    const sessionId = {session_json};
-    const params = new URLSearchParams(window.location.search);
-    const playerId = params.get("player_id") || "";
-    const token = params.get("token") || "";
-    const authQuery = new URLSearchParams({{ player_id: playerId, token }});
-    const statusEl = document.querySelector("#status");
-    const identityEl = document.querySelector("#identity");
-    const teamsEl = document.querySelector("#teams");
-    const metaEl = document.querySelector("#meta");
-    const lastHandEl = document.querySelector("#last-hand");
-    const messageEl = document.querySelector("#message");
-    const trumpPanel = document.querySelector("#trump-panel");
-    const trumpButtons = document.querySelector("#trump-buttons");
-    const trickEl = document.querySelector("#current-trick");
-    const handEl = document.querySelector("#hand");
 
-    function teamName(id) {{
-      return `Team ${{Number(id) + 1}}`;
-    }}
-
-    function render(data) {{
-      identityEl.textContent = data.player_id ? `Playing as ${{data.player_id}}` : "";
-      renderStatus(data);
-      renderTeams(data.teams || []);
-      renderMeta(data);
-      renderTrumpControls(data);
-      renderTrick(data.current_trick || []);
-      renderHand(data.hand || [], new Set(data.playable_card_ids || []));
-      renderLastHand(data.last_hand);
-    }}
-
-    function renderStatus(data) {{
-      if (data.phase === "finished") {{
-        statusEl.textContent = `${{teamName(data.winner_team)}} wins the match.`;
-      }} else if (data.phase === "choose_trump") {{
-        statusEl.textContent = data.can_choose_trump
-          ? "Choose trump / حکم را انتخاب کنید"
-          : `Waiting for Hâkem / حاکم: ${{data.hakem}}`;
-      }} else if (data.current_turn === data.player_id) {{
-        statusEl.textContent = "Your turn / نوبت شما";
-      }} else {{
-        statusEl.textContent = `Turn / نوبت: ${{data.current_turn || ""}}`;
-      }}
-    }}
-
-    function renderTeams(teams) {{
-      teamsEl.replaceChildren(...teams.map((team) => {{
-        const item = document.createElement("div");
-        item.className = `team${{team.is_hakem_team ? " active" : ""}}`;
-        const title = document.createElement("strong");
-        title.textContent = `${{team.name}}${{team.is_hakem_team ? " · Hâkem" : ""}}`;
-        const players = document.createElement("div");
-        players.className = "players";
-        players.textContent = team.players.join(" / ");
-        const stats = document.createElement("div");
-        stats.className = "stats";
-        stats.textContent = `Score ${{team.score}} · Tricks ${{team.tricks}}`;
-        item.append(title, players, stats);
-        return item;
-      }}));
-    }}
-
-    function renderMeta(data) {{
-      const trump = data.trump_symbol ? data.trump_symbol : "not chosen";
-      metaEl.textContent =
-        `Hand ${{data.hand_number}} · Hâkem / حاکم: ${{data.hakem}}` +
-        ` · Trump / حکم: ${{trump}}`;
-    }}
-
-    function renderTrumpControls(data) {{
-      trumpPanel.hidden = data.phase !== "choose_trump";
-      trumpButtons.replaceChildren();
-      if (data.phase !== "choose_trump") return;
-      for (const option of data.trump_options || []) {{
-        const button = document.createElement("button");
-        button.textContent = option.symbol;
-        button.disabled = !data.can_choose_trump;
-        button.addEventListener("click", () => {{
-          sendAction("choose_trump", {{ suit: option.suit }});
-        }});
-        trumpButtons.append(button);
-      }}
-    }}
-
-    function renderTrick(plays) {{
-      const cells = [];
-      for (let index = 0; index < 4; index += 1) {{
-        const play = plays[index];
-        const cell = document.createElement("div");
-        cell.className = "play";
-        if (play) {{
-          const player = document.createElement("span");
-          player.textContent = play.player_id;
-          const card = document.createElement("strong");
-          card.textContent = play.card.label;
-          if (play.card.color === "red") card.style.color = "#ff6b7b";
-          cell.append(player, card);
-        }} else {{
-          cell.textContent = "Waiting";
-        }}
-        cells.push(cell);
-      }}
-      trickEl.replaceChildren(...cells);
-    }}
-
-    function renderHand(cards, playable) {{
-      if (!cards.length) {{
-        const empty = document.createElement("div");
-        empty.className = "log";
-        empty.textContent = "No cards visible yet.";
-        handEl.replaceChildren(empty);
-        return;
-      }}
-      handEl.replaceChildren(...cards.map((card) => {{
-        const button = document.createElement("button");
-        button.className = `card ${{card.color}}`;
-        button.disabled = !playable.has(card.id);
-        const rank = document.createElement("span");
-        rank.textContent = card.rank;
-        const symbol = document.createElement("strong");
-        symbol.textContent = card.symbol;
-        button.append(rank, symbol);
-        button.addEventListener("click", () => {{
-          sendAction("play_card", {{ card: card.id }});
-        }});
-        return button;
-      }}));
-    }}
-
-    function renderLastHand(lastHand) {{
-      if (!lastHand) {{
-        lastHandEl.textContent = "No completed hand yet.";
-        return;
-      }}
-      lastHandEl.textContent =
-        `${{teamName(lastHand.winner_team)}} · ${{lastHand.result}}` +
-        ` · +${{lastHand.points}}`;
-    }}
-
-    async function sendAction(action, payload) {{
-      const res = await fetch(`/api/sessions/${{sessionId}}/actions?${{authQuery}}`, {{
-        method: "POST",
-        headers: {{ "Content-Type": "application/json" }},
-        body: JSON.stringify({{ action, payload }}),
-      }});
-      const data = await res.json();
-      messageEl.textContent = data.error || data.message || "";
-      if (data.session) render(data.session);
-    }}
-
-    async function refresh() {{
-      if (!playerId || !token) {{
-        statusEl.textContent = "Open your signed player link from Matrix.";
-        return;
-      }}
-      const res = await fetch(`/api/sessions/${{sessionId}}?${{authQuery}}`);
-      const data = await res.json();
-      if (!res.ok) {{
-        statusEl.textContent = data.error || "Could not load game.";
-        return;
-      }}
-      render(data);
-    }}
-
-    function connectEvents() {{
-      if (!playerId || !token) return;
-      const events = new EventSource(`/api/sessions/${{sessionId}}/events?${{authQuery}}`);
-      events.addEventListener("state", (event) => {{
-        render(JSON.parse(event.data));
-      }});
-    }}
-
-    refresh();
-    connectEvents();
-  </script>
-</body>
-</html>"""
 
 
 def _hokm_html(session_id: str) -> str:
@@ -2343,4 +2509,4 @@ def _hokm_html(session_id: str) -> str:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
-    web.run_app(create_app(), host="0.0.0.0", port=port)
+    web.run_app(create_app(), host="0.0.0.0", port=port)  # nosec B104

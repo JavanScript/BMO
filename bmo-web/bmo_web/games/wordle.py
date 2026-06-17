@@ -139,13 +139,29 @@ class WordleGame:
             raise ValueError(f"Unsupported Wordle action: {action}")
         return self.guess(player_id=player_id, text=str(payload.get("guess", "")))
 
+    @property
+    def solved(self) -> bool:
+        guesses = self.guesses or []
+        return bool(guesses) and guesses[-1].solved
+
     def serialize_public(self, player_id: str | None = None) -> JsonDict:
         del player_id
+        guesses = self.guesses or []
         return {
             "board": self.board,
-            "guess_count": len(self.guesses or []),
+            "rows": [
+                {
+                    "guess": result.guess.upper(),
+                    "marks": [mark.name for mark in result.marks],
+                }
+                for result in guesses
+            ],
+            "guess_count": len(guesses),
             "max_guesses": MAX_GUESSES,
+            "word_length": WORD_LENGTH,
             "ended": self.ended,
+            "solved": self.solved,
+            "answer": self.answer.upper() if self.ended else None,
         }
 
     def to_state(self) -> JsonDict:

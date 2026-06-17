@@ -7,3 +7,4 @@ min_players:
   hokm: 4
   wordle: 1
 game_overrides: {}
+sync_interval_minutes: 15

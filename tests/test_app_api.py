@@ -8,7 +8,7 @@ from aiohttp.test_utils import make_mocked_request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bmo-web"))
 
-from bmo_web.app import admin_summary, create_app, list_games
+from bmo_web.app import _prune_admin_tokens, admin_summary, create_app, list_games
 from bmo_web.games.registry import GameRegistry
 from bmo_web.sessions import SessionStore
 
@@ -74,6 +74,15 @@ class AppApiTest(unittest.IsolatedAsyncioTestCase):
         response = await admin_summary(request)
 
         self.assertEqual(response.status, 200)
+
+
+class AdminTokenPruneTest(unittest.TestCase):
+    def test_prunes_only_expired_tokens(self) -> None:
+        tokens = {"fresh": 100.0, "stale": 40.0, "expiring": 50.0}
+
+        _prune_admin_tokens(tokens, now=50.0)
+
+        self.assertEqual(set(tokens), {"fresh"})
 
 
 def _json(response: web.Response) -> dict[str, object]:

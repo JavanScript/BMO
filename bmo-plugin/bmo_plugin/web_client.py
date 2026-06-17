@@ -64,6 +64,7 @@ class BmoWebClient:
         lobby_id: str,
         room_id: str,
         players: Iterable[str],
+        display_names: dict[str, str] | None = None,
     ) -> CreatedSession:
         payload = {
             "game": game_key,
@@ -72,6 +73,8 @@ class BmoWebClient:
             "players": list(players),
             "public_base_url": self.public_base_url,
         }
+        if display_names:
+            payload["display_names"] = display_names
         try:
             session = await self._get_session()
             async with session.post(

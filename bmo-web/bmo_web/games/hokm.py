@@ -307,9 +307,9 @@ class HokmGame:
                 PlayedCard.from_state(_ensure_dict(play))
                 for play in state.get("current_trick", [])
             ],
-            last_trick=_optional_dict(state.get("last_trick")),
-            last_hand=_optional_dict(state.get("last_hand")),
-            winner_team=_optional_team(state.get("winner_team")),
+            last_trick=dict(state["last_trick"]) if state.get("last_trick") else None,
+            last_hand=dict(state["last_hand"]) if state.get("last_hand") else None,
+            winner_team=int(state["winner_team"]) if state.get("winner_team") is not None else None,
             hand_number=int(state.get("hand_number", 0)),
         )
 
@@ -339,7 +339,7 @@ class HokmGame:
 
     def _finish_hand(self, winning_team: int) -> GameReply:
         hakem_team = self.team_of[self.hakem]
-        losing_team = _other_team(winning_team)
+        losing_team = 1 if winning_team == 0 else 0
         losing_tricks = self.hand_tricks[losing_team]
         points = 1
         result = "normal"
@@ -500,22 +500,6 @@ def _sorted_cards(cards: Iterable[Card]) -> list[Card]:
 def _team_totals(value: object) -> dict[int, int]:
     data = _ensure_dict(value)
     return {0: int(data.get("0", data.get(0, 0))), 1: int(data.get("1", data.get(1, 0)))}
-
-
-def _other_team(team: int) -> int:
-    return 1 if team == 0 else 0
-
-
-def _optional_team(value: object) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def _optional_dict(value: object) -> dict[str, object] | None:
-    if value is None:
-        return None
-    return dict(_ensure_dict(value))
 
 
 def _ensure_dict(value: object) -> JsonDict:

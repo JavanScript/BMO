@@ -12,3 +12,4 @@ class Config(BaseProxyConfig):
         helper.copy("shared_secret")
         helper.copy("min_players")
         helper.copy("game_overrides")
+        helper.copy("sync_interval_minutes")

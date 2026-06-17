@@ -178,12 +178,6 @@ def reaction_from_event(evt: Any) -> Reaction | None:
 def _as_mapping(value: Any) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return value
-    if hasattr(value, "serialize"):
-        serialized = value.serialize()
-        if isinstance(serialized, Mapping):
-            return serialized
-    if hasattr(value, "__dict__"):
-        return vars(value)
     return {}
 
 
