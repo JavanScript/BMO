@@ -381,7 +381,12 @@ async def admin_debug_play(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=404)
     players = [f"@debug-{i}" for i in range(info.min_players)]
     loop = asyncio.get_running_loop()
-    log = await loop.run_in_executor(None, run_debug, factory, players)
+    try:
+        log = await loop.run_in_executor(None, run_debug, factory, players)
+    except Exception as exc:  # noqa: BLE001 - surface any plugin/sandbox failure as JSON
+        return web.json_response(
+            {"error": f"Debug run failed: {exc}"}, status=500
+        )
     return web.json_response({
         "game_key": game_key,
         "players": players,
@@ -498,7 +503,9 @@ def _reload_plugins(app: web.Application) -> list[str]:
     registry = GameRegistry.defaults()
     errors = _register_plugins(registry, app[PLUGINS_DIR_KEY])
     store.replace_registry(registry)
-    app[PLUGIN_ERRORS_KEY] = errors
+    # Mutate the existing list in place; aiohttp deprecates reassigning app
+    # keys (app[KEY] = ...) once the application has started.
+    app[PLUGIN_ERRORS_KEY][:] = errors
     return errors
 
 
@@ -540,6 +547,9 @@ def _require_admin(request: web.Request, store: SessionStore) -> None:
     token = request.headers.get("X-BMO-Admin-Token", "")
     expiry = tokens.get(token, 0)
     if expiry > now:
+        # Sliding expiry: keep an actively-used session alive so admins are
+        # not surprise-logged-out mid-task.
+        tokens[token] = now + ADMIN_TOKEN_TTL
         return
     _prune_admin_tokens(tokens, now)
 
@@ -1140,18 +1150,24 @@ def _admin_html() -> str:
           const debugBtn = actionBtn("Debug", "secondary", async () => {
             debugBtn.disabled = true;
             debugBtn.textContent = "Running...";
-            const res = await api("/api/admin/debug/play", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ game: g.key }),
-            });
-            const data = await res.json();
-            debugNote.textContent = res.ok
-              ? `${g.key}: ${data.steps} steps, ended=${!!(data.result && data.result.ended)}`
-              : data.error || "Debug failed";
-            debugNote.className = res.ok ? "success" : "error";
-            debugBtn.disabled = false;
-            debugBtn.textContent = "Debug";
+            try {
+              const res = await api("/api/admin/debug/play", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ game: g.key }),
+              });
+              const data = await res.json().catch(() => ({}));
+              debugNote.textContent = res.ok
+                ? `${g.key}: ${data.steps} steps, ended=${!!(data.result && data.result.ended)}`
+                : data.error || `Debug failed (HTTP ${res.status})`;
+              debugNote.className = res.ok ? "success" : "error";
+            } catch (e) {
+              debugNote.textContent = "Debug request failed (connection error).";
+              debugNote.className = "error";
+            } finally {
+              debugBtn.disabled = false;
+              debugBtn.textContent = "Debug";
+            }
           });
           cells.push(debugBtn);
           if (g.source === "plugin") {

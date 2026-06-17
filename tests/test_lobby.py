@@ -153,6 +153,46 @@ class LobbyManagerTest(unittest.TestCase):
         self.assertNotIn("@extra:example.org", lobby.players)
         self.assertIn("4/4", manager.render_lobby(lobby))
 
+class ReactionParsingTest(unittest.TestCase):
+    def test_parses_typed_relates_to_object(self) -> None:
+        # maubot delivers m.relates_to as a typed object (RelatesTo), not a
+        # dict. reaction_from_event must coerce it via .serialize().
+        class RelatesTo:
+            def serialize(self):
+                return {
+                    "rel_type": "m.annotation",
+                    "event_id": "$message",
+                    "key": "👍",
+                }
+
+        reaction = reaction_from_event(
+            SimpleNamespace(
+                room_id="!room:example.org",
+                sender="@ada:example.org",
+                content={"m.relates_to": RelatesTo()},
+            )
+        )
+
+        self.assertIsNotNone(reaction)
+        self.assertEqual(reaction.event_id, "$message")
+        self.assertEqual(reaction.key, "👍")
+
+    def test_parses_relates_to_via_dunder_dict(self) -> None:
+        relates_to = SimpleNamespace(
+            rel_type="m.annotation", event_id="$message", key="👍"
+        )
+        reaction = reaction_from_event(
+            SimpleNamespace(
+                room_id="!room:example.org",
+                sender="@ada:example.org",
+                content={"m.relates_to": relates_to},
+            )
+        )
+
+        self.assertIsNotNone(reaction)
+        self.assertEqual(reaction.key, "👍")
+
+
 def _reaction(sender: str):
     return reaction_from_event(
         SimpleNamespace(
