@@ -99,11 +99,13 @@ def create_app(
 
 async def list_games(request: web.Request) -> web.Response:
     store = request.app[STORE_KEY]
+    plugins_dir = request.app[PLUGINS_DIR_KEY]
     return web.json_response(
         {
             "games": [
                 info.to_public_dict()
                 for info in store.registry.list_games()
+                if _is_plugin_enabled(plugins_dir, info.key)
             ]
         }
     )
