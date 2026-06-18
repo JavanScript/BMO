@@ -70,7 +70,6 @@ def discover_plugins(directory: Path) -> PluginDiscovery:
         if child.name.startswith(".") or not child.is_dir():
             continue
         if not _is_plugin_enabled(directory, child.name):
-            errors.append(f"{child.name}: disabled")
             continue
         try:
             plugins.append(load_plugin_directory(child))
