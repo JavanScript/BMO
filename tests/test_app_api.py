@@ -8,7 +8,13 @@ from aiohttp.test_utils import make_mocked_request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bmo-web"))
 
-from bmo_web.app import _prune_admin_tokens, admin_summary, create_app, list_games
+from bmo_web.app import (
+    _mint_admin_token,
+    _verify_admin_token,
+    admin_summary,
+    create_app,
+    list_games,
+)
 from bmo_web.games.registry import GameRegistry
 from bmo_web.sessions import SessionStore
 
@@ -76,13 +82,25 @@ class AppApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
 
 
-class AdminTokenPruneTest(unittest.TestCase):
-    def test_prunes_only_expired_tokens(self) -> None:
-        tokens = {"fresh": 100.0, "stale": 40.0, "expiring": 50.0}
+class AdminTokenTest(unittest.TestCase):
+    def test_minted_token_verifies(self) -> None:
+        token = _mint_admin_token("secret", now=1000.0)
+        self.assertTrue(_verify_admin_token("secret", token, now=1000.0))
 
-        _prune_admin_tokens(tokens, now=50.0)
+    def test_rejects_wrong_secret(self) -> None:
+        token = _mint_admin_token("secret", now=1000.0)
+        self.assertFalse(_verify_admin_token("other-secret", token, now=1000.0))
 
-        self.assertEqual(set(tokens), {"fresh"})
+    def test_rejects_expired_token(self) -> None:
+        token = _mint_admin_token("secret", now=1000.0)
+        self.assertFalse(_verify_admin_token("secret", token, now=1000.0 + 3601))
+
+    def test_rejects_tampered_or_garbage(self) -> None:
+        self.assertFalse(_verify_admin_token("secret", "", now=1000.0))
+        self.assertFalse(_verify_admin_token("secret", "9999999999", now=1000.0))
+        self.assertFalse(
+            _verify_admin_token("secret", "9999999999.deadbeef", now=1000.0)
+        )
 
 
 def _json(response: web.Response) -> dict[str, object]:

@@ -5,7 +5,7 @@ import hmac
 import json
 import os
 import time
-import secrets
+from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -32,8 +32,8 @@ PLUGINS_DIR_KEY = web.AppKey("plugins_dir", Path)
 PLUGIN_ERRORS_KEY = web.AppKey("plugin_errors", list)
 ADMIN_PASSWORD_KEY = web.AppKey("admin_password", object)
 PLUGIN_UPLOADS_ENABLED_KEY = web.AppKey("plugin_uploads_enabled", bool)
-ADMIN_TOKENS_KEY = web.AppKey("admin_tokens", dict)
 ADMIN_TOKEN_TTL = 3600  # 1 hour
+ADMIN_COOKIE_NAME = "bmo_admin"
 SSE_HEARTBEAT_SECONDS = 25
 
 
@@ -75,7 +75,6 @@ def create_app(
         if enable_plugin_uploads is None
         else enable_plugin_uploads
     )
-    app[ADMIN_TOKENS_KEY] = {}
     app.router.add_get("/api/games", list_games)
     app.router.add_post("/api/sessions", create_session)
     app.router.add_get("/api/sessions/{session_id}", get_session)
@@ -421,7 +420,6 @@ async def admin_login(request: web.Request) -> web.Response:
 
     store = request.app[STORE_KEY]
     admin_password = str(request.app[ADMIN_PASSWORD_KEY] or "")
-    tokens = request.app[ADMIN_TOKENS_KEY]
 
     valid = False
     if admin_password and hmac.compare_digest(password, admin_password):
@@ -432,18 +430,24 @@ async def admin_login(request: web.Request) -> web.Response:
     if not valid:
         return web.json_response({"error": "invalid password"}, status=401)
 
-    now = time.time()
-    _prune_admin_tokens(tokens, now)
-    token = secrets.token_urlsafe(32)
-    tokens[token] = now + ADMIN_TOKEN_TTL
-    return web.json_response({"token": token})
+    token = _mint_admin_token(store.shared_secret, time.time())
+    response = web.json_response({"token": token})
+    response.set_cookie(
+        ADMIN_COOKIE_NAME,
+        token,
+        max_age=ADMIN_TOKEN_TTL,
+        httponly=True,
+        samesite="Strict",
+        secure=request.secure,
+        path="/",
+    )
+    return response
 
 
 async def admin_logout(request: web.Request) -> web.Response:
-    tokens = request.app[ADMIN_TOKENS_KEY]
-    token = request.headers.get("X-BMO-Admin-Token", "")
-    tokens.pop(token, None)
-    return web.json_response({"ok": True})
+    response = web.json_response({"ok": True})
+    response.del_cookie(ADMIN_COOKIE_NAME, path="/")
+    return response
 
 
 def _authorized_session(
@@ -535,23 +539,44 @@ def _admin_summary(
     }
 
 
-def _prune_admin_tokens(tokens: dict[str, float], now: float) -> None:
-    expired = [token for token, expiry in tokens.items() if expiry <= now]
-    for token in expired:
-        tokens.pop(token, None)
+def _mint_admin_token(secret: str, now: float) -> str:
+    """Stateless admin token: '<expiry>.<hmac>'.
+
+    Signed with the shared secret so it survives process restarts without any
+    server-side state, and cannot be forged without the secret.
+    """
+    expiry = int(now) + ADMIN_TOKEN_TTL
+    payload = str(expiry)
+    signature = hmac.new(
+        secret.encode("utf-8"), payload.encode("utf-8"), sha256
+    ).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _verify_admin_token(secret: str, token: str, now: float) -> bool:
+    payload, _, signature = token.partition(".")
+    if not signature:
+        return False
+    expected = hmac.new(
+        secret.encode("utf-8"), payload.encode("utf-8"), sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return False
+    try:
+        return int(payload) > now
+    except ValueError:
+        return False
 
 
 def _require_admin(request: web.Request, store: SessionStore) -> None:
-    tokens = request.app.get(ADMIN_TOKENS_KEY, {})
-    now = time.time()
-    token = request.headers.get("X-BMO-Admin-Token", "")
-    expiry = tokens.get(token, 0)
-    if expiry > now:
-        # Sliding expiry: keep an actively-used session alive so admins are
-        # not surprise-logged-out mid-task.
-        tokens[token] = now + ADMIN_TOKEN_TTL
+    # Stateless signed token, delivered via cookie (survives proxies that may
+    # strip custom headers) or the X-BMO-Admin-Token header (for CLI use).
+    token = (
+        request.cookies.get(ADMIN_COOKIE_NAME, "")
+        or request.headers.get("X-BMO-Admin-Token", "")
+    )
+    if token and _verify_admin_token(store.shared_secret, token, time.time()):
         return
-    _prune_admin_tokens(tokens, now)
 
     admin_password = str(request.app[ADMIN_PASSWORD_KEY] or "")
     provided_admin = request.headers.get("X-BMO-Admin", "")
