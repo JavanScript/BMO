@@ -696,64 +696,71 @@ def _admin_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BMO Admin</title>
   <style>
-    :root {
-      color-scheme: light dark;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
-        "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-      --bg-primary: #f2f2f7;
-      --bg-elevated: rgba(255, 255, 255, .8);
-      --bg-card: #ffffff;
-      --bg-fill: rgba(120, 120, 128, .08);
-      --bg-fill-strong: rgba(120, 120, 128, .14);
-      --separator: rgba(60, 60, 67, .12);
-      --separator-opaque: #d1d1d6;
-      --text-primary: #1c1c1e;
-      --text-secondary: #6c6c70;
-      --text-tertiary: #aeaeb2;
-      --accent: #007aff;
-      --accent-hover: #0a84ff;
-      --danger: #ff3b30;
-      --success: #34c759;
-      --warning: #ff9500;
-      --shadow: 0 1px 3px rgba(0, 0, 0, .06), 0 8px 24px rgba(0, 0, 0, .06);
-      --radius-lg: 18px;
-      --radius-md: 12px;
-      --radius-sm: 8px;
+    :root { color-scheme: light dark; font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif; }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --c-bg: #f0f0f2;
+        --c-surface: #ffffff;
+        --c-border: rgba(0,0,0,0.18);
+        --c-text: #1c1c1e;
+        --c-text-dim: #6b6b70;
+        --c-accent: 63,185,80;
+        --c-accent-lo: #2e9e3e;
+        --c-accent-hi: #3fb950;
+        --c-accent-text: #1a1a1a;
+        --c-danger: #dc5050;
+        --radius-lg: 34px;
+        --radius-md: 16px;
+        --radius-sm: 10px;
+      }
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg-primary: #000000;
-        --bg-elevated: rgba(28, 28, 30, .8);
-        --bg-card: #1c1c1e;
-        --bg-fill: rgba(120, 120, 128, .18);
-        --bg-fill-strong: rgba(120, 120, 128, .28);
-        --separator: rgba(84, 84, 88, .4);
-        --separator-opaque: #38383a;
-        --text-primary: #ffffff;
-        --text-secondary: #98989f;
-        --text-tertiary: #6c6c70;
-        --accent: #0a84ff;
-        --accent-hover: #409cff;
-        --danger: #ff453a;
-        --success: #30d158;
-        --warning: #ff9f0a;
-        --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .5);
+        --c-bg: #1a1a1f;
+        --c-surface: #222226;
+        --c-border: rgba(255,255,255,0.08);
+        --c-text: #c8c8cc;
+        --c-text-dim: #88888c;
+        --c-accent: 63,185,80;
+        --c-accent-lo: #2e9e3e;
+        --c-accent-hi: #7ef06d;
+        --c-accent-text: #b3ffb0;
+        --c-danger: #dc5050;
+        --radius-lg: 34px;
+        --radius-md: 16px;
+        --radius-sm: 10px;
       }
     }
+    html.light { --c-bg: #f0f0f2; --c-surface: #ffffff; --c-border: rgba(0,0,0,0.18); --c-text: #1c1c1e; --c-text-dim: #6b6b70; --c-accent: 63,185,80; --c-accent-lo: #2e9e3e; --c-accent-hi: #3fb950; --c-accent-text: #1a1a1a; --c-danger: #dc5050; color-scheme: light; }
+    html.dark { --c-bg: #1a1a1f; --c-surface: #222226; --c-border: rgba(255,255,255,0.08); --c-text: #c8c8cc; --c-text-dim: #88888c; --c-accent: 63,185,80; --c-accent-lo: #2e9e3e; --c-accent-hi: #7ef06d; --c-accent-text: #b3ffb0; --c-danger: #dc5050; color-scheme: dark; }
+
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       min-height: 100vh;
-      background: var(--bg-primary);
-      color: var(--text-primary);
+      background: var(--c-bg);
+      color: var(--c-text);
       -webkit-font-smoothing: antialiased;
-      letter-spacing: -.01em;
+      font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
     }
+
+    .noise {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: 0.035;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 180px 180px;
+    }
+
     main {
       width: min(1040px, calc(100vw - 32px));
       margin: 0 auto;
       padding: 0 0 48px;
     }
+
     .login-screen {
       display: flex;
       align-items: center;
@@ -762,29 +769,61 @@ def _admin_html() -> str:
       padding: 24px;
     }
     .login-card {
-      width: min(360px, 100%);
-      padding: 32px 28px;
-      background: var(--bg-card);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
+      width: min(400px, 100%);
+      padding: 40px;
+      background: var(--c-surface);
+      border-radius: 32px;
+      border: 1px solid rgba(var(--c-accent), 0.2);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(var(--c-accent),0.1) inset;
       text-align: center;
     }
     .login-card h1 {
-      margin: 0 0 6px;
-      font-size: 22px;
+      margin: 0 0 4px;
+      font-size: 28px;
       font-weight: 700;
+      color: #ffffff;
     }
     .login-card .subtitle {
-      margin: 0 0 24px;
-      color: var(--text-secondary);
-      font-size: 14px;
-    }
-    .login-card .error {
-      color: var(--danger);
+      margin: 0 0 30px;
+      color: var(--c-text-dim);
       font-size: 13px;
+      letter-spacing: 0.3px;
+    }
+    .login-card input {
+      background: #17171c;
+      border: 1px solid var(--c-border);
+      border-radius: 12px;
+      color: #ffffff;
+      padding: 12px 16px;
+      font-size: 15px;
+      width: 100%;
+      margin-bottom: 16px;
+      min-height: unset;
+    }
+    .login-card input:focus {
+      border-color: rgba(var(--c-accent), 0.5);
+      box-shadow: 0 0 0 2px rgba(var(--c-accent), 0.15);
+    }
+    .login-card button {
+      background: rgb(var(--c-accent));
+      border-radius: 30px;
+      text-transform: uppercase;
+      font-weight: 500;
+      letter-spacing: 1px;
+      padding: 12px 20px;
+      width: 100%;
+      border: none;
+      color: #ffffff;
+      min-height: unset;
+    }
+    .login-card button:hover { background: var(--c-accent-lo); }
+    .login-card .error {
+      color: var(--c-danger);
+      font-size: 12px;
       margin: 12px 0 0;
       min-height: 18px;
     }
+
     header {
       position: sticky;
       top: 0;
@@ -795,30 +834,29 @@ def _admin_html() -> str:
       gap: 16px;
       margin: 0 -16px 8px;
       padding: 16px;
-      background: var(--bg-elevated);
-      backdrop-filter: saturate(180%) blur(20px);
-      -webkit-backdrop-filter: saturate(180%) blur(20px);
-      border-bottom: .5px solid var(--separator);
+      background: var(--c-surface);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 28px 55px -12px rgba(0,0,0,0.5), 0 0 0 1px rgba(var(--c-accent),0.06) inset;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
     }
     .header-left h1 {
       margin: 0;
-      font-size: 22px;
+      font-size: 20px;
       font-weight: 700;
+      color: var(--c-accent-text);
     }
     .header-left div {
-      color: var(--text-secondary);
-      font-size: 13px;
-      margin-top: 1px;
-    }
-    h1 { margin: 0; font-size: 22px; font-weight: 700; }
-    h2 {
-      margin: 0 0 12px;
-      font-size: 13px;
-      font-weight: 600;
+      color: var(--c-text-dim);
+      font-size: 11px;
+      letter-spacing: 1.5px;
       text-transform: uppercase;
-      letter-spacing: .04em;
-      color: var(--text-secondary);
+      margin-top: 2px;
     }
+
+    h1 { margin: 0; font-size: 22px; font-weight: 700; }
+
     button, input {
       min-height: 38px;
       border-radius: var(--radius-sm);
@@ -826,46 +864,124 @@ def _admin_html() -> str:
       font: inherit;
       letter-spacing: -.01em;
       background: transparent;
-      color: var(--text-primary);
+      color: var(--c-text);
     }
     button {
       padding: 0 18px;
-      background: var(--accent);
-      color: #fff;
+      background: rgba(var(--c-accent), 0.15);
+      color: var(--c-accent-text);
       font-weight: 600;
       cursor: pointer;
+      border: 1px solid rgba(var(--c-accent), 0.3);
       transition: background .15s, transform .08s, opacity .15s;
     }
-    button:hover { background: var(--accent-hover); }
+    button:hover { background: rgba(var(--c-accent), 0.25); }
     button:active { transform: scale(.97); }
     button:disabled { opacity: .4; cursor: not-allowed; }
     button:focus-visible {
-      outline: 2px solid var(--accent);
+      outline: 2px solid var(--c-accent-hi);
       outline-offset: 2px;
     }
     button.secondary {
-      background: var(--bg-fill);
-      color: var(--accent);
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.12);
+      color: var(--c-text);
     }
-    button.secondary:hover { background: var(--bg-fill-strong); }
+    button.secondary:hover { background: rgba(255,255,255,0.12); }
     button.danger {
-      background: var(--bg-fill);
-      color: var(--danger);
+      background: rgba(220,80,80,0.12);
+      border-color: rgba(220,80,80,0.25);
+      color: var(--c-danger);
     }
-    button.danger:hover { background: rgba(255, 59, 48, .14); }
+    button.danger:hover { background: rgba(220,80,80,0.22); }
     input {
       width: 100%;
       padding: 0 14px;
-      background: var(--bg-fill);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--c-border);
       outline: none;
-      transition: box-shadow .15s;
+      transition: border-color .15s, box-shadow .15s;
     }
-    input::placeholder { color: var(--text-tertiary); }
-    input:focus { box-shadow: 0 0 0 3.5px rgba(0, 122, 255, .3); }
+    input::placeholder { color: var(--c-text-dim); }
+    input:focus { border-color: rgba(var(--c-accent), 0.5); box-shadow: 0 0 0 3px rgba(var(--c-accent), 0.1); }
     input[type="file"] { padding: 8px; }
     .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
     section {
+      background: var(--c-surface);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--c-border);
+      box-shadow: 0 28px 55px -12px rgba(0,0,0,0.5), 0 0 0 1px rgba(var(--c-accent),0.08) inset;
+      overflow: hidden;
       margin-top: 24px;
+    }
+    section > h2 {
+      margin: 0;
+      padding: 14px 24px;
+      background: rgba(0,0,0,0.08);
+      border-bottom: 1px solid rgba(var(--c-accent),0.15);
+      color: var(--c-accent-text);
+      font-size: 12px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    section > h2::before {
+      content: '';
+      width: 3px;
+      height: 14px;
+      border-radius: 999px;
+      background: rgba(var(--c-accent), 0.7);
+      flex-shrink: 0;
+    }
+    section > .tools { padding: 20px 24px; }
+    section > :last-child { padding-bottom: 20px; }
+    section > #progress-wrap { padding: 0 24px; }
+    section > #upload-note, section > #debug-note { padding: 0 24px; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 12px 24px 20px;
+    }
+    .pagination button {
+      min-height: 32px;
+      min-width: 32px;
+      padding: 0 10px;
+    }
+    .pagination-info {
+      font-size: 13px;
+      color: var(--c-text-dim);
+      font-weight: 600;
+      min-width: 60px;
+      text-align: center;
+    }
+    section > .table-wrap { border: none; border-radius: 0; box-shadow: none; background: none; }
+    section > .grid {
+      padding: 20px 24px;
+      gap: 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    section > .grid > div {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    section > .grid .card {
+      margin: 0;
+      flex: 1;
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-md);
+      background: rgba(0,0,0,0.12);
+    }
+    section > .grid pre {
+      min-height: 60px;
+      background: none;
+      margin: 0;
     }
     .tools {
       display: flex;
@@ -879,120 +995,170 @@ def _admin_html() -> str:
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 12px 16px;
-      border: 1.5px dashed var(--separator-opaque);
+      padding: 14px 18px;
+      border: 1.5px dashed rgba(var(--c-accent), 0.25);
       border-radius: var(--radius-md);
-      background: var(--bg-card);
+      background: rgba(var(--c-accent), 0.04);
       cursor: pointer;
-      font-size: 14px;
-      color: var(--text-secondary);
+      font-size: 13px;
+      color: var(--c-text);
       transition: border-color .15s, background .15s;
     }
-    .upload-zone:hover { border-color: var(--accent); }
+    .upload-zone:hover { border-color: rgba(var(--c-accent), 0.5); background: rgba(var(--c-accent), 0.08); }
     .upload-zone.dragover {
-      border-color: var(--accent);
-      background: rgba(0, 122, 255, .08);
+      border-color: rgba(var(--c-accent), 0.7);
+      background: rgba(var(--c-accent), 0.12);
     }
+
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 16px;
     }
+
     .card {
-      background: var(--bg-card);
-      border-radius: var(--radius-lg);
       padding: 18px 20px;
-      box-shadow: var(--shadow);
     }
+
     .table-wrap {
-      background: var(--bg-card);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
       overflow: hidden;
     }
     .table-scroll { overflow-x: auto; }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 14px;
+      font-size: 13px;
     }
     th, td {
-      padding: 13px 16px;
-      border-bottom: .5px solid var(--separator);
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
       text-align: left;
       vertical-align: middle;
     }
     tbody tr:last-child td { border-bottom: none; }
     th {
-      font-size: 12px;
+      font-size: 10px;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: .03em;
-      color: var(--text-secondary);
+      letter-spacing: 1.5px;
+      color: var(--c-text-dim);
     }
     tbody tr { transition: background .12s; }
-    tbody tr:hover td { background: var(--bg-fill); }
+    tbody tr:hover td { background: rgba(255,255,255,0.03); }
     td:first-child { font-variant-numeric: tabular-nums; }
+
     pre {
       margin: 0;
       min-height: 80px;
       overflow: auto;
       padding: 16px;
       border-radius: var(--radius-md);
-      background: var(--bg-fill);
-      color: var(--text-primary);
+      color: var(--c-text);
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
-      font-size: 12.5px;
+      font-size: 12px;
       line-height: 1.55;
     }
+
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 5px;
       padding: 3px 9px;
       border-radius: 999px;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
-      background: var(--bg-fill-strong);
-      color: var(--text-secondary);
+      background: rgba(255,255,255,0.06);
+      color: var(--c-text-dim);
     }
-    .badge-yes { background: rgba(52, 199, 89, .18); color: var(--success); }
-    .badge-no { background: rgba(255, 59, 48, .16); color: var(--danger); }
-    .muted { color: var(--text-secondary); }
-    .error { color: var(--danger); font-weight: 600; }
-    .success { color: var(--success); font-weight: 600; }
+    .badge-yes { background: rgba(var(--c-accent), 0.18); color: var(--c-accent-text); }
+    .badge-no { background: rgba(220,80,80,0.15); color: var(--c-danger); }
+    .muted { color: var(--c-text-dim); }
+    .error { color: var(--c-danger); font-weight: 600; }
+    .success { color: var(--c-accent-text); font-weight: 600; }
+
     .spinner {
       display: inline-block;
       width: 18px; height: 18px;
-      border: 2px solid var(--separator);
-      border-top-color: var(--accent);
+      border: 2px solid rgba(255,255,255,0.06);
+      border-top-color: var(--c-accent-hi);
       border-radius: 50%;
       animation: spin .6s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .hidden { display: none !important; }
+
     .progress-bar {
       width: 100%;
       height: 5px;
-      background: var(--bg-fill-strong);
+      background: rgba(255,255,255,0.06);
       border-radius: 999px;
       overflow: hidden;
       margin: 10px 0;
     }
     .progress-bar div {
       height: 100%;
-      background: var(--accent);
+      background: var(--c-accent-hi);
       width: 0;
       border-radius: 999px;
       transition: width .2s;
     }
+
+    .theme-btn {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+      color: var(--c-text-dim);
+      font-size: 16px;
+      line-height: 1;
+      min-height: unset;
+      border-color: rgba(255,255,255,0.1);
+    }
+    .theme-btn:hover { background: rgba(255,255,255,0.12); color: var(--c-text); }
+    .theme-menu-wrap { position: relative; }
+    .theme-menu {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 6px;
+      min-width: 130px;
+      background: var(--c-surface);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-md);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      padding: 4px;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .theme-menu button {
+      min-height: 32px;
+      padding: 0 14px;
+      font-size: 13px;
+      text-align: left;
+      justify-content: flex-start;
+      background: transparent;
+      border: none;
+      border-radius: var(--radius-sm);
+      color: var(--c-text);
+    }
+    .theme-menu button:hover { background: rgba(var(--c-accent), 0.12); }
+    .theme-menu button.active { background: rgba(var(--c-accent), 0.18); color: var(--c-accent-text); }
+
     @media (max-width: 760px) {
+      section > .grid { grid-template-columns: 1fr; }
+      section > .grid pre { overflow: auto; word-break: break-all; }
       .grid { grid-template-columns: 1fr; }
       header { margin: 0 -16px 8px; }
     }
   </style>
 </head>
 <body>
+  <div class="noise" aria-hidden="true"></div>
   <div id="login-screen" class="login-screen">
     <div class="login-card">
       <h1>BMO Admin</h1>
@@ -1014,6 +1180,14 @@ def _admin_html() -> str:
       </div>
       <div class="btn-row">
         <span id="session-info" class="muted" style="font-size:13px"></span>
+        <div class="theme-menu-wrap">
+          <button id="theme-btn" class="theme-btn" aria-label="Theme">☾</button>
+          <div id="theme-menu" class="theme-menu hidden">
+            <button data-mode="system">System</button>
+            <button data-mode="light">Light</button>
+            <button data-mode="dark">Dark</button>
+          </div>
+        </div>
         <button id="logout-btn" class="danger">Logout</button>
       </div>
     </header>
@@ -1023,7 +1197,7 @@ def _admin_html() -> str:
       <div class="tools">
         <button id="reload-btn" class="secondary">Reload Plugins</button>
         <div class="upload-zone" id="upload-zone">
-          <span>📦</span>
+          <span>⬆</span>
           <span id="upload-label">Drop plugin zip here or click to browse</span>
           <input id="plugin-file" type="file" accept=".zip" hidden>
         </div>
@@ -1045,20 +1219,23 @@ def _admin_html() -> str:
       <div id="sessions"><div class="spinner"></div></div>
     </section>
 
-    <div class="grid">
-      <section>
-        <h2>Config</h2>
-        <div class="card"><pre id="config">Loading...</pre></div>
-      </section>
-      <section>
-        <h2>Plugin Errors</h2>
-        <div class="card"><pre id="errors">Loading...</pre></div>
-      </section>
-    </div>
+    <section>
+      <h2>Server</h2>
+      <div class="grid">
+        <div>
+          <div class="card"><pre id="config">Loading...</pre></div>
+        </div>
+        <div>
+          <div class="card"><pre id="errors">Loading...</pre></div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script>
     let adminToken = localStorage.getItem("bmo_admin_token") || "";
+    const themeBtn = document.querySelector("#theme-btn");
+    const themeMenu = document.querySelector("#theme-menu");
     const loginScreen = document.querySelector("#login-screen");
     const dashboard = document.querySelector("#dashboard");
     const loginPassword = document.querySelector("#login-password");
@@ -1198,11 +1375,43 @@ def _admin_html() -> str:
         a.textContent = links.length > 1
           ? `▶ Seat ${i + 1} — ${link.player_id}`
           : `▶ Open game (${link.player_id})`;
-        a.style.cssText = "display:inline-block;margin:4px 12px 0 0;color:var(--accent)";
+        a.style.cssText = "display:inline-block;margin:4px 12px 0 0;color:var(--c-accent-hi)";
         debugNote.append(a);
       });
     }
 
+    let sessionPage = 0;
+    const SESSION_PAGE_SIZE = 5;
+    function renderSessions(all) {
+      const totalPages = Math.max(1, Math.ceil(all.length / SESSION_PAGE_SIZE));
+      if (sessionPage >= totalPages) sessionPage = totalPages - 1;
+      const page = all.slice(sessionPage * SESSION_PAGE_SIZE, (sessionPage + 1) * SESSION_PAGE_SIZE);
+      const wrap = table(
+        ["Session", "Game", "Players", "Updated"],
+        page,
+        (s) => [
+          shortId(s.session_id),
+          s.game,
+          String(s.players.length),
+          String(s.updated_at || "").slice(0, 19).replace("T", " "),
+        ]
+      );
+      const nav = document.createElement("div");
+      nav.className = "pagination";
+      const prevBtn = document.createElement("button");
+      prevBtn.textContent = "←";
+      prevBtn.disabled = sessionPage <= 0;
+      prevBtn.addEventListener("click", () => { sessionPage--; renderSessions(all); });
+      const pageInfo = document.createElement("span");
+      pageInfo.className = "pagination-info";
+      pageInfo.textContent = `${sessionPage + 1} / ${totalPages}`;
+      const nextBtn = document.createElement("button");
+      nextBtn.textContent = "→";
+      nextBtn.disabled = sessionPage >= totalPages - 1;
+      nextBtn.addEventListener("click", () => { sessionPage++; renderSessions(all); });
+      nav.append(prevBtn, pageInfo, nextBtn);
+      sessionsEl.replaceChildren(wrap, nav);
+    }
     function render(summary) {
       statusEl.textContent = "Connected";
       statusEl.className = "muted";
@@ -1295,16 +1504,7 @@ def _admin_html() -> str:
         }
       ));
 
-      sessionsEl.replaceChildren(table(
-        ["Session", "Game", "Players", "Updated"],
-        summary.sessions,
-        (s) => [
-          shortId(s.session_id),
-          s.game,
-          String(s.players.length),
-          String(s.updated_at || "").slice(0, 19).replace("T", " "),
-        ]
-      ));
+      renderSessions(summary.sessions);
 
       configEl.textContent = JSON.stringify(summary.config, null, 2);
       errorsEl.textContent = summary.plugin_errors.length
@@ -1382,6 +1582,34 @@ def _admin_html() -> str:
         uploadNote.className = "error";
       }
     }
+
+    function updateThemeIcon(mode) {
+      themeBtn.textContent = mode === "light" ? "\u2600" : mode === "dark" ? "\u263E" : "\u2601";
+    }
+
+    (function initTheme() {
+      const saved = localStorage.getItem("bmo_theme") || "system";
+      function apply(m) {
+        document.documentElement.className = m === "light" ? "light" : m === "dark" ? "dark" : "";
+        updateThemeIcon(m);
+        document.querySelectorAll(".theme-menu button").forEach((b) => {
+          b.classList.toggle("active", b.dataset.mode === m);
+        });
+      }
+      apply(saved);
+      themeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        themeMenu.classList.toggle("hidden");
+      });
+      themeMenu.addEventListener("click", (e) => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        apply(btn.dataset.mode);
+        localStorage.setItem("bmo_theme", btn.dataset.mode);
+        themeMenu.classList.add("hidden");
+      });
+      document.addEventListener("click", () => themeMenu.classList.add("hidden"));
+    })();
 
     if (adminToken) {
       showDashboard();
@@ -1689,606 +1917,150 @@ def _hokm_html(session_id: str) -> str:
       background: #081423;
       color: #e7eef8;
     }
-    * {
-      box-sizing: border-box;
-    }
-    html,
-    body {
-      max-width: 100%;
-      overflow-x: hidden;
-    }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: #081423;
-    }
+    * { box-sizing: border-box; }
+    html, body { max-width: 100%; overflow-x: hidden; }
+    body { margin: 0; min-height: 100vh; background: #081423; }
     main {
       width: min(1240px, calc(100vw - 24px));
-      margin: 0 auto;
-      padding: 18px 0 28px;
-      min-width: 0;
+      margin: 0 auto; padding: 18px 0 28px; min-width: 0;
     }
-    h1 {
-      margin: 0;
-      font-size: 28px;
-      letter-spacing: 0;
-    }
-    h2 {
-      margin: 0;
-      font-size: 15px;
-      letter-spacing: 0;
-    }
+    h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
+    h2 { margin: 0; font-size: 15px; letter-spacing: 0; }
     button {
       min-height: 40px;
-      border: 1px solid rgba(247, 240, 223, .34);
-      border-radius: 7px;
-      font: inherit;
-      cursor: pointer;
+      border: 1px solid rgba(247,240,223,.34);
+      border-radius: 7px; font: inherit; cursor: pointer;
     }
-    button:disabled {
-      cursor: not-allowed;
-      opacity: .45;
-    }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 14px;
-    }
-    .status-line {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 8px;
-    }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+    .topbar-actions { display: flex; gap: 8px; align-items: center; }
+    .topbar-actions button { min-height: 32px; min-width: 36px; padding: 0 10px; font-size: 12px; background: transparent; color: #c9d7ea; border-color: rgba(247,240,223,.2); }
+    .status-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .badge {
-      min-height: 30px;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      border: 1px solid rgba(247, 240, 223, .2);
-      border-radius: 999px;
-      padding: 5px 10px;
-      background: rgba(15, 31, 52, .72);
-      color: #c9d7ea;
-      font-size: 13px;
-      font-weight: 700;
+      min-height: 30px; display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid rgba(247,240,223,.2); border-radius: 999px;
+      padding: 5px 10px; background: rgba(15,31,52,.72);
+      color: #c9d7ea; font-size: 13px; font-weight: 700;
     }
-    .badge.hot {
-      background: #f0b84d;
-      border-color: #f0b84d;
-      color: #081423;
-    }
-    .identity {
-      color: #aebed4;
-      overflow-wrap: anywhere;
-      text-align: right;
-      font-size: 14px;
-    }
-    .game-shell {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 300px;
-      gap: 14px;
-      align-items: start;
-      min-width: 0;
-    }
+    .badge.hot { background: #f0b84d; border-color: #f0b84d; color: #081423; }
+    .identity { color: #aebed4; overflow-wrap: anywhere; text-align: right; font-size: 14px; }
+    .game-shell { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 14px; align-items: start; min-width: 0; }
     .felt {
-      min-height: 590px;
-      border: 1px solid rgba(247, 240, 223, .2);
-      border-radius: 8px;
-      background: #0c1b2d;
-      box-shadow:
-        inset 0 0 0 1px rgba(255, 255, 255, .05),
-        0 14px 36px rgba(0, 0, 0, .22);
-      padding: 18px;
-      min-width: 0;
-      overflow: hidden;
+      min-height: 590px; border: 1px solid rgba(247,240,223,.2);
+      border-radius: 8px; background: #0c1b2d;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.05), 0 14px 36px rgba(0,0,0,.22);
+      padding: 18px; min-width: 0; overflow: hidden;
     }
     .table-grid {
-      min-height: 360px;
-      display: grid;
-      grid-template-columns: 185px minmax(250px, 1fr) 185px;
-      grid-template-rows: 116px minmax(170px, 1fr) 122px;
-      gap: 12px;
-      align-items: stretch;
-      min-width: 0;
+      min-height: 360px; display: grid;
+      grid-template-columns: 185px minmax(250px,1fr) 185px;
+      grid-template-rows: 116px minmax(170px,1fr) 122px;
+      gap: 12px; align-items: stretch; min-width: 0;
     }
     .seat {
-      min-width: 0;
-      border: 1px solid rgba(247, 240, 223, .18);
-      border-radius: 8px;
-      background: rgba(45, 68, 104, .38);
-      padding: 11px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      gap: 8px;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .03);
-      overflow: hidden;
+      min-width: 0; border: 1px solid rgba(247,240,223,.18);
+      border-radius: 8px; background: rgba(45,68,104,.38);
+      padding: 11px; display: flex; flex-direction: column;
+      justify-content: space-between; gap: 8px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03); overflow: hidden;
     }
-    .seat.current {
-      border-color: #f0b84d;
-      box-shadow: 0 0 0 2px rgba(240, 184, 77, .34);
-    }
-    .seat.viewer {
-      background: rgba(75, 126, 190, .22);
-    }
-    .seat.top {
-      grid-column: 2;
-      grid-row: 1;
-    }
-    .seat.left {
-      grid-column: 1;
-      grid-row: 2;
-    }
-    .seat.right {
-      grid-column: 3;
-      grid-row: 2;
-    }
-    .seat.bottom {
-      grid-column: 2;
-      grid-row: 3;
-    }
-    .seat-name {
-      color: #f4f8ff;
-      font-weight: 800;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .seat-id {
-      color: #9eb0c8;
-      font-size: 12px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .seat-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .tag {
-      border-radius: 999px;
-      padding: 3px 8px;
-      background: rgba(8, 20, 35, .72);
-      color: #c9d7ea;
-      font-size: 12px;
-      font-weight: 800;
-      max-width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .tag.hakem {
-      background: #f0b84d;
-      color: #081423;
-    }
-    .tag.turn {
-      background: #64d2ff;
-      color: #061220;
-    }
-    .table-center {
-      grid-column: 2;
-      grid-row: 2;
-      min-width: 0;
-      border: 1px solid rgba(201, 215, 234, .2);
-      border-radius: 8px;
-      background: rgba(5, 15, 29, .68);
-      padding: 14px;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      gap: 12px;
-    }
-    .center-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-      min-width: 0;
-    }
-    .status {
-      min-width: 0;
-      color: #f0b84d;
-      font-weight: 900;
-      overflow-wrap: anywhere;
-    }
-    .trump-mark {
-      min-width: 56px;
-      text-align: center;
-      border-radius: 8px;
-      background: #dce8f7;
-      color: #081423;
-      padding: 8px;
-      font-size: 26px;
-      font-weight: 900;
-      line-height: 1;
-    }
-    .trick {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      align-content: center;
-    }
-    .play {
-      min-height: 82px;
-      border: 1px dashed rgba(201, 215, 234, .24);
-      border-radius: 8px;
-      padding: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      color: #c9d7ea;
-      min-width: 0;
-    }
-    .play.winner {
-      border-style: solid;
-      border-color: #f0b84d;
-      box-shadow: 0 0 0 1px rgba(240, 184, 77, .25);
-    }
-    .play .name {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .mini-card {
-      width: 46px;
-      height: 64px;
-      border-radius: 7px;
-      border: 1px solid #cbd7e6;
-      background: #f8fbff;
-      color: #081423;
-      display: grid;
-      place-items: center;
-      font-size: 18px;
-      font-weight: 900;
-      flex: 0 0 auto;
-      box-shadow: 0 5px 12px rgba(0, 0, 0, .2);
-    }
-    .mini-card.red {
-      color: #b62438;
-    }
-    .trump-panel {
-      display: none;
-      border-top: 1px solid rgba(201, 215, 234, .16);
-      padding-top: 12px;
-    }
-    .trump-panel.active {
-      display: block;
-    }
-    .trump-buttons {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-      margin-top: 8px;
-    }
-    .trump-buttons button {
-      min-width: 0;
-      min-height: 54px;
-      background: #dce8f7;
-      color: #081423;
-      font-size: 24px;
-      font-weight: 900;
-    }
-    .trump-buttons button.red {
-      color: #b62438;
-    }
-    .hand-wrap {
-      margin-top: 18px;
-      min-width: 0;
-      max-width: 100%;
-    }
-    .hand-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 10px;
-    }
-    .hand {
-      min-height: 148px;
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      overflow-y: hidden;
-      overscroll-behavior-x: contain;
-      padding: 2px 2px 12px;
-      scroll-snap-type: x proximity;
-      width: 100%;
-      max-width: 100%;
-      min-width: 0;
-      -webkit-overflow-scrolling: touch;
-    }
+    .seat.current { border-color: #f0b84d; box-shadow: 0 0 0 2px rgba(240,184,77,.34); }
+    .seat.viewer { background: rgba(75,126,190,.22); }
+    .seat.top { grid-column: 2; grid-row: 1; }
+    .seat.left { grid-column: 1; grid-row: 2; }
+    .seat.right { grid-column: 3; grid-row: 2; }
+    .seat.bottom { grid-column: 2; grid-row: 3; }
+    .seat-name { color: #f4f8ff; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .seat-id { color: #9eb0c8; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .seat-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { border-radius: 999px; padding: 3px 8px; background: rgba(8,20,35,.72); color: #c9d7ea; font-size: 12px; font-weight: 800; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag.hakem { background: #f0b84d; color: #081423; }
+    .tag.turn { background: #64d2ff; color: #061220; }
+    .table-center { grid-column: 2; grid-row: 2; min-width: 0; border: 1px solid rgba(201,215,234,.2); border-radius: 8px; background: rgba(5,15,29,.68); padding: 14px; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; }
+    .center-top { display: flex; justify-content: space-between; gap: 10px; align-items: center; min-width: 0; }
+    .status { min-width: 0; color: #f0b84d; font-weight: 900; overflow-wrap: anywhere; }
+    .suit-mark { min-width: 56px; text-align: center; border-radius: 8px; background: #dce8f7; color: #081423; padding: 8px; font-size: 26px; font-weight: 900; line-height: 1; }
+    .trick { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; align-content: center; }
+    .play { min-height: 82px; border: 1px dashed rgba(201,215,234,.24); border-radius: 8px; padding: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #c9d7ea; min-width: 0; }
+    .play.winner { border-style: solid; border-color: #f0b84d; box-shadow: 0 0 0 1px rgba(240,184,77,.25); }
+    .play .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
+    .mini-card { width: 46px; height: 64px; border-radius: 7px; border: 1px solid #cbd7e6; background: #f8fbff; color: #081423; display: grid; place-items: center; font-size: 18px; font-weight: 900; flex: 0 0 auto; box-shadow: 0 5px 12px rgba(0,0,0,.2); }
+    .mini-card.red { color: #b62438; }
+    .suit-panel { display: none; border-top: 1px solid rgba(201,215,234,.16); padding-top: 12px; }
+    .suit-panel.active { display: block; }
+    .suit-buttons { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-top: 8px; }
+    .suit-buttons button { min-width: 0; min-height: 54px; background: #dce8f7; color: #081423; font-size: 24px; font-weight: 900; border-radius: 7px; border: 1px solid rgba(247,240,223,.34); cursor: pointer; }
+    .suit-buttons button:disabled { cursor: not-allowed; opacity: .45; }
+    .suit-buttons button.red { color: #b62438; }
+    .hand-wrap { margin-top: 18px; min-width: 0; max-width: 100%; }
+    .hand-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }
+    .hand { min-height: 148px; display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; padding: 2px 2px 12px; scroll-snap-type: x proximity; width: 100%; max-width: 100%; min-width: 0; -webkit-overflow-scrolling: touch; }
     .card {
-      width: clamp(68px, 7vw, 88px);
-      min-width: clamp(68px, 7vw, 88px);
-      flex: 0 0 clamp(68px, 7vw, 88px);
-      aspect-ratio: 5 / 7;
-      background: #f8fbff;
-      color: #081423;
-      border: 1px solid #cbd7e6;
-      box-shadow: 0 6px 14px rgba(0, 0, 0, .25);
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 9px;
-      font-weight: 900;
+      width: clamp(68px,7vw,88px); min-width: clamp(68px,7vw,88px);
+      flex: 0 0 clamp(68px,7vw,88px); aspect-ratio: 5/7;
+      background: #f8fbff; color: #081423; border: 1px solid #cbd7e6;
+      box-shadow: 0 6px 14px rgba(0,0,0,.25);
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: 9px; font-weight: 900;
       scroll-snap-align: start;
       transition: transform .14s ease, box-shadow .14s ease, opacity .14s ease;
     }
-    .card.playable {
-      transform: translateY(-6px);
-      border-color: #f0b84d;
-      box-shadow: 0 10px 18px rgba(240, 184, 77, .28);
-    }
-    .card.red {
-      color: #b62438;
-    }
-    .card span {
-      align-self: flex-start;
-      font-size: 18px;
-    }
-    .card strong {
-      align-self: center;
-      font-size: 34px;
-      line-height: 1;
-    }
-    .side-panel {
-      border: 1px solid rgba(247, 240, 223, .2);
-      border-radius: 8px;
-      background: rgba(15, 31, 52, .72);
-      padding: 14px;
-      margin-bottom: 12px;
-    }
-    .team {
-      border: 1px solid rgba(247, 240, 223, .13);
-      border-radius: 8px;
-      background: rgba(45, 68, 104, .32);
-      padding: 10px;
-      margin-top: 10px;
-    }
-    .team.active {
-      border-color: rgba(240, 184, 77, .95);
-    }
-    .players {
-      color: #c9d7ea;
-      overflow-wrap: anywhere;
-      font-size: 14px;
-      line-height: 1.45;
-      margin-top: 6px;
-    }
-    .stats {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 8px;
-      color: #e7eef8;
-      font-weight: 700;
-    }
-    .log {
-      color: #c9d7ea;
-      line-height: 1.45;
-      min-height: 44px;
-      overflow-wrap: anywhere;
-    }
-    .message {
-      color: #f0b84d;
-      font-weight: 700;
-    }
-    .empty {
-      min-height: 120px;
-      display: grid;
-      place-items: center;
-      border: 1px dashed rgba(201, 215, 234, .22);
-      border-radius: 8px;
-      color: #9eb0c8;
-    }
-    .danger {
-      color: #ffb7c0;
-    }
-    @media (max-width: 900px) {
-      .game-shell {
-        grid-template-columns: 1fr;
-      }
-      .felt {
-        min-height: 0;
-      }
-    }
+    .card.playable { transform: translateY(-6px); border-color: #f0b84d; box-shadow: 0 10px 18px rgba(240,184,77,.28); }
+    .card.red { color: #b62438; }
+    .card span { align-self: flex-start; font-size: 18px; }
+    .card strong { align-self: center; font-size: 34px; line-height: 1; }
+    .side-panel { border: 1px solid rgba(247,240,223,.2); border-radius: 8px; background: rgba(15,31,52,.72); padding: 14px; margin-bottom: 12px; }
+    .team { border: 1px solid rgba(247,240,223,.13); border-radius: 8px; background: rgba(45,68,104,.32); padding: 10px; margin-top: 10px; }
+    .team.active { border-color: rgba(240,184,77,.95); }
+    .players { color: #c9d7ea; overflow-wrap: anywhere; font-size: 14px; line-height: 1.45; margin-top: 6px; }
+    .stats { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; color: #e7eef8; font-weight: 700; }
+    .log { color: #c9d7ea; line-height: 1.45; min-height: 44px; overflow-wrap: anywhere; }
+    .message { color: #f0b84d; font-weight: 700; }
+    .empty { min-height: 120px; display: grid; place-items: center; border: 1px dashed rgba(201,215,234,.22); border-radius: 8px; color: #9eb0c8; }
+    .danger { color: #ffb7c0; }
+    @media (max-width: 900px) { .game-shell { grid-template-columns: 1fr; } .felt { min-height: 0; } }
     @media (max-width: 720px) {
-      body {
-        min-height: 100dvh;
-        background: #081423;
-      }
-      main {
-        width: 100%;
-        padding: 8px 8px 12px;
-      }
-      .topbar {
-        position: sticky;
-        top: 0;
-        z-index: 5;
-        display: block;
-        margin: 0 -8px 8px;
-        padding: 8px 8px 10px;
-        background: #081423;
-        border-bottom: 1px solid rgba(201, 215, 234, .14);
-      }
-      h1 {
-        font-size: 22px;
-      }
-      h2 {
-        font-size: 14px;
-      }
-      .status-line {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 6px;
-      }
-      .badge {
-        min-height: 28px;
-        justify-content: center;
-        padding: 4px 7px;
-        font-size: 12px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .identity {
-        text-align: left;
-        margin-top: 6px;
-        font-size: 12px;
-      }
-      .game-shell {
-        gap: 10px;
-      }
-      .felt {
-        min-height: 0;
-        padding: 10px;
-        border-radius: 0;
-        border-left: 0;
-        border-right: 0;
-      }
-      .table-grid {
-        min-height: 0;
-        display: grid;
-        grid-template-columns: minmax(64px, .72fr) minmax(128px, 1.36fr)
-          minmax(64px, .72fr);
-        grid-template-rows: 68px minmax(160px, auto) 74px;
-        gap: 6px;
-      }
-      .seat.top,
-      .seat.left,
-      .seat.right,
-      .seat.bottom {
-        min-height: 0;
-        padding: 8px;
-      }
-      .seat.top {
-        grid-column: 2;
-        grid-row: 1;
-      }
-      .seat.left {
-        grid-column: 1;
-        grid-row: 2;
-      }
-      .seat.right {
-        grid-column: 3;
-        grid-row: 2;
-      }
-      .seat.bottom {
-        grid-column: 2;
-        grid-row: 3;
-      }
-      .table-center {
-        grid-column: 2;
-        grid-row: 2;
-        min-height: 0;
-        padding: 10px;
-        gap: 8px;
-      }
-      .seat-name {
-        font-size: 14px;
-      }
-      .seat-id {
-        display: none;
-      }
-      .seat-tags {
-        gap: 4px;
-      }
-      .tag {
-        padding: 3px 6px;
-        font-size: 11px;
-      }
-      .center-top {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 44px;
-        align-items: start;
-      }
-      .status {
-        font-size: 15px;
-        line-height: 1.25;
-      }
-      .trump-mark {
-        min-width: 48px;
-        font-size: 24px;
-        padding: 7px;
-      }
-      .trick {
-        gap: 6px;
-      }
-      .play {
-        min-height: 48px;
-        justify-content: center;
-        padding: 5px;
-      }
-      .play .name {
-        display: none;
-      }
-      .mini-card {
-        width: 34px;
-        height: 46px;
-        font-size: 15px;
-        border-radius: 6px;
-      }
-      .trump-buttons {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .trump-buttons button {
-        min-height: 48px;
-      }
-      .hand-wrap {
-        position: sticky;
-        bottom: 0;
-        z-index: 4;
-        margin: 10px 0 0;
-        padding: 10px 0 6px;
-        background: #0c1b2d;
-        border-top: 1px solid rgba(201, 215, 234, .16);
-        overflow: hidden;
-      }
-      .hand-head {
-        margin-bottom: 8px;
-      }
-      .hand {
-        min-height: 118px;
-        gap: 7px;
-        padding-bottom: 8px;
-      }
-      .card {
-        width: 64px;
-        min-width: 64px;
-        flex-basis: 64px;
-        padding: 7px;
-      }
-      .card span {
-        font-size: 16px;
-      }
-      .card strong {
-        font-size: 30px;
-      }
-      .card.playable {
-        transform: translateY(-4px);
-      }
-      .side-panel {
-        margin-bottom: 8px;
-        padding: 10px;
-        border-radius: 0;
-        border-left: 0;
-        border-right: 0;
-      }
-      .team {
-        padding: 8px;
-      }
-      .players,
-      .stats,
-      .log {
-        font-size: 13px;
-      }
+      body { min-height: 100dvh; background: #081423; }
+      main { width: 100%; padding: 8px 8px 12px; }
+      .topbar { position: sticky; top: 0; z-index: 5; display: block; margin: 0 -8px 8px; padding: 8px 8px 10px; background: #081423; border-bottom: 1px solid rgba(201,215,234,.14); }
+      .topbar-actions { margin-top: 8px; }
+      h1 { font-size: 22px; }
+      h2 { font-size: 14px; }
+      .status-line { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; }
+      .badge { min-height: 28px; justify-content: center; padding: 4px 7px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .identity { text-align: left; margin-top: 6px; font-size: 12px; }
+      .game-shell { gap: 10px; }
+      .felt { min-height: 0; padding: 10px; border-radius: 0; border-left: 0; border-right: 0; }
+      .table-grid { min-height: 0; grid-template-columns: minmax(64px,.72fr) minmax(128px,1.36fr) minmax(64px,.72fr); grid-template-rows: 68px minmax(160px,auto) 74px; gap: 6px; }
+      .seat { padding: 8px; }
+      .seat.top { grid-column: 2; grid-row: 1; }
+      .seat.left { grid-column: 1; grid-row: 2; }
+      .seat.right { grid-column: 3; grid-row: 2; }
+      .seat.bottom { grid-column: 2; grid-row: 3; }
+      .table-center { padding: 10px; gap: 8px; }
+      .seat-name { font-size: 14px; }
+      .seat-id { display: none; }
+      .seat-tags { gap: 4px; }
+      .tag { padding: 3px 6px; font-size: 11px; }
+      .center-top { display: grid; grid-template-columns: minmax(0,1fr) 44px; align-items: start; }
+      .status { font-size: 15px; line-height: 1.25; }
+      .suit-mark { min-width: 48px; font-size: 24px; padding: 7px; }
+      .trick { gap: 6px; }
+      .play { min-height: 48px; justify-content: center; padding: 5px; }
+      .play .name { display: none; }
+      .mini-card { width: 34px; height: 46px; font-size: 15px; border-radius: 6px; }
+      .suit-buttons { grid-template-columns: repeat(2,1fr); }
+      .suit-buttons button { min-height: 48px; }
+      .hand-wrap { position: sticky; bottom: 0; z-index: 4; margin: 10px 0 0; padding: 10px 0 6px; background: #0c1b2d; border-top: 1px solid rgba(201,215,234,.16); overflow: hidden; }
+      .hand-head { margin-bottom: 8px; }
+      .hand { min-height: 118px; gap: 7px; padding-bottom: 8px; }
+      .card { width: 64px; min-width: 64px; flex-basis: 64px; padding: 7px; }
+      .card span { font-size: 16px; }
+      .card strong { font-size: 30px; }
+      .card.playable { transform: translateY(-4px); }
+      .side-panel { margin-bottom: 8px; padding: 10px; border-radius: 0; border-left: 0; border-right: 0; }
+      .team { padding: 8px; }
+      .players, .stats, .log { font-size: 13px; }
     }
   </style>
 </head>
@@ -2296,12 +2068,15 @@ def _hokm_html(session_id: str) -> str:
   <main>
     <div class="topbar">
       <div>
-        <h1>Hokm / حکم</h1>
+        <h1 data-t="hokmTitle">Hokm</h1>
         <div class="status-line">
-          <span id="phase-badge" class="badge">Loading</span>
-          <span id="turn-badge" class="badge">Turn</span>
-          <span id="trump-badge" class="badge">Trump</span>
+          <span id="phase-badge" class="badge" data-t="phaseBadge">Loading</span>
+          <span id="turn-badge" class="badge" data-t="turnBadge">Turn</span>
+          <span id="suit-badge" class="badge" data-t="suitBadge">Suit</span>
         </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="lang-btn" title="Language">EN</button>
       </div>
       <div id="identity" class="identity"></div>
     </div>
@@ -2316,19 +2091,19 @@ def _hokm_html(session_id: str) -> str:
           <div class="table-center">
             <div class="center-top">
               <div id="status" class="status">Loading...</div>
-              <div id="trump-mark" class="trump-mark">?</div>
+              <div id="suit-mark" class="suit-mark">?</div>
             </div>
             <div class="trick" id="current-trick"></div>
-            <div id="trump-panel" class="trump-panel">
-              <h2>Trump / حکم</h2>
-              <div id="trump-buttons" class="trump-buttons"></div>
+            <div id="suit-panel" class="suit-panel">
+              <h2 data-t="suit">Suit / حکم</h2>
+              <div id="suit-buttons" class="suit-buttons"></div>
             </div>
           </div>
         </div>
 
         <div class="hand-wrap">
           <div class="hand-head">
-            <h2>Your hand / دست شما</h2>
+            <h2 data-t="yourHand">Your hand / دست شما</h2>
             <span id="hand-count" class="badge">0 cards</span>
           </div>
           <div id="hand" class="hand"></div>
@@ -2337,19 +2112,19 @@ def _hokm_html(session_id: str) -> str:
 
       <aside>
         <div class="side-panel">
-          <h2>Teams / تیم‌ها</h2>
+          <h2 data-t="teams">Teams / تیم‌ها</h2>
           <div id="teams"></div>
         </div>
         <div class="side-panel">
-          <h2>Table / میز</h2>
+          <h2 data-t="table">Table / میز</h2>
           <div id="meta" class="log"></div>
         </div>
         <div class="side-panel">
-          <h2>Last hand / دست قبلی</h2>
+          <h2 data-t="lastHand">Last hand / دست قبلی</h2>
           <div id="last-hand" class="log"></div>
         </div>
         <div class="side-panel">
-          <h2>Message / پیام</h2>
+          <h2 data-t="message">Message / پیام</h2>
           <div id="message" class="log message"></div>
         </div>
       </aside>
@@ -2365,14 +2140,14 @@ def _hokm_html(session_id: str) -> str:
     const identityEl = document.querySelector("#identity");
     const phaseBadge = document.querySelector("#phase-badge");
     const turnBadge = document.querySelector("#turn-badge");
-    const trumpBadge = document.querySelector("#trump-badge");
-    const trumpMark = document.querySelector("#trump-mark");
+    const suitBadge = document.querySelector("#suit-badge");
+    const suitMark = document.querySelector("#suit-mark");
     const teamsEl = document.querySelector("#teams");
     const metaEl = document.querySelector("#meta");
     const lastHandEl = document.querySelector("#last-hand");
     const messageEl = document.querySelector("#message");
-    const trumpPanel = document.querySelector("#trump-panel");
-    const trumpButtons = document.querySelector("#trump-buttons");
+    const suitPanel = document.querySelector("#suit-panel");
+    const suitButtons = document.querySelector("#suit-buttons");
     const trickEl = document.querySelector("#current-trick");
     const handEl = document.querySelector("#hand");
     const handCountEl = document.querySelector("#hand-count");
@@ -2384,7 +2159,7 @@ def _hokm_html(session_id: str) -> str:
     };
 
     function teamName(id) {
-      return `Team ${Number(id) + 1}`;
+      return `${t("team")} ${Number(id) + 1}`;
     }
 
     function shortName(player) {
@@ -2421,15 +2196,14 @@ def _hokm_html(session_id: str) -> str:
       if (text !== undefined) element.textContent = text;
       return element;
     }
-
     function render(data) {
-      identityEl.textContent = data.player_id ? `Playing as ${data.player_id}` : "";
+      identityEl.textContent = data.player_id ? `${t("playingAs")} ${data.player_id}` : "";
       statusEl.classList.remove("danger");
       renderStatus(data);
       renderSeats(data);
       renderTeams(data.teams || []);
       renderMeta(data);
-      renderTrumpControls(data);
+      renderSuitControls(data);
       renderTrick(data);
       renderHand(data.hand || [], new Set(data.playable_card_ids || []));
       renderLastHand(data.last_hand);
@@ -2437,31 +2211,30 @@ def _hokm_html(session_id: str) -> str:
 
     function renderStatus(data) {
       phaseBadge.textContent = data.phase === "choose_trump"
-        ? "Trump / حکم"
+        ? t("phaseSuit")
         : data.phase === "finished"
-          ? "Finished"
-          : `Hand ${data.hand_number}`;
+          ? t("phaseFinished")
+          : `${t("hand")} ${data.hand_number}`;
       phaseBadge.classList.toggle("hot", data.phase === "choose_trump");
       turnBadge.textContent = data.current_turn
-        ? `Turn: ${shortName(data.current_turn)}`
-        : "Turn";
+        ? `${t("turn")}: ${shortName(data.current_turn)}`
+        : t("turn");
       turnBadge.classList.toggle("hot", data.current_turn === data.player_id);
-      trumpBadge.textContent = data.trump_symbol
-        ? `Trump ${data.trump_symbol}`
-        : "Trump ?";
-      trumpBadge.classList.toggle("hot", Boolean(data.trump_symbol));
-      trumpMark.textContent = data.trump_symbol || "?";
-
+      suitBadge.textContent = data.trump_symbol
+        ? `${t("suit")} ${data.trump_symbol}`
+        : `${t("suit")} ?`;
+      suitBadge.classList.toggle("hot", Boolean(data.trump_symbol));
+      suitMark.textContent = data.trump_symbol || "?";
       if (data.phase === "finished") {
-        statusEl.textContent = `${teamName(data.winner_team)} wins the match.`;
+        statusEl.textContent = `${teamName(data.winner_team)} ${t("wins")}`;
       } else if (data.phase === "choose_trump") {
         statusEl.textContent = data.can_choose_trump
-          ? "Choose trump / حکم را انتخاب کنید"
-          : `Waiting for Hâkem / حاکم: ${shortName(data.hakem)}`;
+          ? t("chooseSuit")
+          : `${t("waitingHakem")}: ${shortName(data.hakem)}`;
       } else if (data.current_turn === data.player_id) {
-        statusEl.textContent = "Your turn / نوبت شما";
+        statusEl.textContent = t("yourTurn");
       } else {
-        statusEl.textContent = `Turn / نوبت: ${shortName(data.current_turn)}`;
+        statusEl.textContent = `${t("turn")}: ${shortName(data.current_turn)}`;
       }
     }
 
@@ -2483,10 +2256,10 @@ def _hokm_html(session_id: str) -> str:
         const tags = node("div", "seat-tags");
         if (team) tags.append(node("span", "tag", teamName(team.id)));
         if (player === data.hakem) {
-          tags.append(node("span", "tag hakem", "Hâkem / حاکم"));
+          tags.append(node("span", "tag hakem", t("hakem")));
         }
         if (player === data.current_turn) {
-          tags.append(node("span", "tag turn", "Turn"));
+          tags.append(node("span", "tag turn", t("turn")));
         }
         seat.replaceChildren(main, tags);
       }
@@ -2498,25 +2271,25 @@ def _hokm_html(session_id: str) -> str:
         const title = node(
           "strong",
           "",
-          `${team.name}${team.is_hakem_team ? " · Hâkem" : ""}`
+          `${teamName(team.id)}${team.is_hakem_team ? ` · ${t("hakem")}` : ""}`
         );
         const players = node("div", "players", team.players.map(shortName).join(" / "));
-        const stats = node("div", "stats", `Score ${team.score} · Tricks ${team.tricks}`);
+        const stats = node("div", "stats", `${t("score")} ${team.score} · ${t("tricks")} ${team.tricks}`);
         item.append(title, players, stats);
         return item;
       }));
     }
 
     function renderMeta(data) {
-      const trump = data.trump_symbol ? data.trump_symbol : "not chosen";
+      const suit = data.trump_symbol ? data.trump_symbol : t("suitNotChosen");
       metaEl.textContent =
-        `Hand ${data.hand_number} · Hâkem / حاکم: ${shortName(data.hakem)}` +
-        ` · Trump / حکم: ${trump}`;
+        `${t("hand")} ${data.hand_number} · ${t("hakem")}: ${shortName(data.hakem)}` +
+        ` · ${t("suit")}: ${suit}`;
     }
 
-    function renderTrumpControls(data) {
-      trumpPanel.classList.toggle("active", data.phase === "choose_trump");
-      trumpButtons.replaceChildren();
+    function renderSuitControls(data) {
+      suitPanel.classList.toggle("active", data.phase === "choose_trump");
+      suitButtons.replaceChildren();
       if (data.phase !== "choose_trump") return;
       for (const option of data.trump_options || []) {
         const button = node("button", ["hearts", "diamonds"].includes(option.suit)
@@ -2527,7 +2300,7 @@ def _hokm_html(session_id: str) -> str:
         button.addEventListener("click", () => {
           sendAction("choose_trump", { suit: option.suit });
         });
-        trumpButtons.append(button);
+        suitButtons.append(button);
       }
     }
 
@@ -2560,9 +2333,9 @@ def _hokm_html(session_id: str) -> str:
     }
 
     function renderHand(cards, playable) {
-      handCountEl.textContent = `${cards.length} card${cards.length === 1 ? "" : "s"}`;
+      handCountEl.textContent = `${cards.length} ${t("card" + (cards.length === 1 ? "" : "s"))}`;
       if (!cards.length) {
-        handEl.replaceChildren(node("div", "empty", "Waiting for deal"));
+        handEl.replaceChildren(node("div", "empty", t("waitingDeal")));
         return;
       }
       handEl.replaceChildren(...cards.map((card) => {
@@ -2579,7 +2352,7 @@ def _hokm_html(session_id: str) -> str:
 
     function renderLastHand(lastHand) {
       if (!lastHand) {
-        lastHandEl.textContent = "No completed hand.";
+        lastHandEl.textContent = t("noHand");
         return;
       }
       lastHandEl.textContent =
@@ -2600,16 +2373,16 @@ def _hokm_html(session_id: str) -> str:
 
     async function refresh() {
       if (!playerId || !token) {
-        statusEl.textContent = "Open your signed player link from Matrix.";
-        phaseBadge.textContent = "Signed link";
-        turnBadge.textContent = "Waiting";
-        trumpBadge.textContent = "Trump ?";
+        statusEl.textContent = t("signedLink");
+        phaseBadge.textContent = t("signedLinkPhase");
+        turnBadge.textContent = t("waiting");
+        suitBadge.textContent = `${t("suit")} ?`;
         return;
       }
       const res = await fetch(`/api/sessions/${sessionId}?${authQuery}`);
       const data = await res.json();
       if (!res.ok) {
-        statusEl.textContent = data.error || "Could not load game.";
+        statusEl.textContent = data.error || t("loadError");
         statusEl.classList.add("danger");
         return;
       }
@@ -2624,6 +2397,52 @@ def _hokm_html(session_id: str) -> str:
       });
     }
 
+    // lang
+    let lang = localStorage.getItem("hokm_lang") || "fa";
+    const LANG = {
+      en: {
+        hokmTitle: "Hokm", suitBadge: "Suit", turnBadge: "Turn", phaseBadge: "Loading",
+        phaseSuit: "Suit", phaseFinished: "Finished", hand: "Hand",
+        suit: "Suit", suitNotChosen: "not chosen", chooseSuit: "Choose suit",
+        waitingHakem: "Waiting for Hâkem", yourTurn: "Your turn",
+        turn: "Turn", signedLink: "Open your signed player link from Matrix.",
+        signedLinkPhase: "Signed link", waiting: "Waiting",
+        team: "Team", hakem: "Hâkem", score: "Score", tricks: "Tricks",
+        yourHand: "Your hand", cards: "cards", card: "card",
+        noHand: "No completed hand.", waitingDeal: "Waiting for deal",
+        teams: "Teams", table: "Table", lastHand: "Last hand", message: "Message",
+        playingAs: "Playing as", wins: "wins the match.", loadError: "Could not load game.",
+      },
+      fa: {
+        hokmTitle: "حکم", suitBadge: "حکم", turnBadge: "نوبت", phaseBadge: "در حال بارگذاری",
+        phaseSuit: "حکم", phaseFinished: "پایان", hand: "دست",
+        suit: "حکم", suitNotChosen: "انتخاب نشده", chooseSuit: "حکم را انتخاب کنید",
+        waitingHakem: "در انتظار حاکم", yourTurn: "نوبت شما",
+        turn: "نوبت", signedLink: "لینک بازیکن خود را از Matrix باز کنید",
+        signedLinkPhase: "لینک ثبت", waiting: "منتظر",
+        team: "تیم", hakem: "حاکم", score: "امتیاز", tricks: "خال",
+        yourHand: "دست شما", cards: "کارت", card: "کارت",
+        noHand: "دست کاملی وجود ندارد.", waitingDeal: "در انتظار پخش دست",
+        teams: "تیم‌ها", table: "میز", lastHand: "دست قبلی", message: "پیام‌ها",
+        playingAs: "بازی به عنوان", wins: "برنده مسابقه شد.", loadError: "خطا در بارگذاری بازی",
+      },
+    };
+    function t(key) { return (LANG[lang] || LANG.en)[key] || key; }
+    function applyLang() {
+      document.querySelector("#lang-btn").textContent = lang.toUpperCase();
+      document.documentElement.lang = lang === "fa" ? "fa" : "en";
+      document.documentElement.dir = lang === "fa" ? "rtl" : "";
+      for (const el of document.querySelectorAll("[data-t]")) {
+        el.textContent = t(el.getAttribute("data-t"));
+      }
+    }
+    document.querySelector("#lang-btn").addEventListener("click", () => {
+      lang = lang === "en" ? "fa" : "en";
+      localStorage.setItem("hokm_lang", lang);
+      applyLang();
+      refresh();
+    });
+    applyLang();
     refresh();
     connectEvents();
   </script>
