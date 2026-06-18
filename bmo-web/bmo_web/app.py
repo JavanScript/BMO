@@ -441,8 +441,11 @@ async def admin_enable_plugin(request: web.Request) -> web.Response:
     store = request.app[STORE_KEY]
     _require_admin(request, store)
     key = request.match_info["key"]
-    set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, True)
-    errors = _reload_plugins(request.app)
+    try:
+        set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, True)
+        errors = _reload_plugins(request.app)
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
     return web.json_response({"ok": True, "plugin_errors": errors, "summary": _admin_summary(request.app, store)})
 
 
@@ -450,8 +453,11 @@ async def admin_disable_plugin(request: web.Request) -> web.Response:
     store = request.app[STORE_KEY]
     _require_admin(request, store)
     key = request.match_info["key"]
-    set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, False)
-    errors = _reload_plugins(request.app)
+    try:
+        set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, False)
+        errors = _reload_plugins(request.app)
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
     return web.json_response({"ok": True, "plugin_errors": errors, "summary": _admin_summary(request.app, store)})
 
 
@@ -1494,10 +1500,12 @@ def _admin_html() -> str:
           const toggleBtn = actionBtn(g.enabled ? "Disable" : "Enable", g.enabled ? "danger" : "secondary", async () => {
             const action = g.enabled ? "disable" : "enable";
             toggleBtn.disabled = true;
-            const res = await api(`/api/admin/plugins/${g.key}/${action}`, { method: "POST" });
-            const data = await res.json();
-            if (res.ok && data.summary) render(data.summary);
-            else toggleBtn.disabled = false;
+            try {
+              const res = await api(`/api/admin/plugins/${g.key}/${action}`, { method: "POST" });
+              const data = await res.json();
+              if (res.ok && data.summary) render(data.summary);
+            } catch (e) { console.error(e); }
+            toggleBtn.disabled = false;
           });
           cells.push(toggleBtn);
           return cells;
