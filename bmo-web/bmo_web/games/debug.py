@@ -24,6 +24,17 @@ def _auto_choose_trump(state: JsonDict, player_id: str) -> tuple[str, JsonDict] 
     return None
 
 
+_WORDS = ("crane", "adieu", "stork", "vivid", "lemon", "ghost", "plumb", "waltz")
+
+
+def _auto_guess(state: JsonDict, player_id: str) -> tuple[str, JsonDict] | None:
+    # A turnless guessing game (Wordle) exposes a board/max_guesses rather
+    # than current_turn or playable cards.
+    if "max_guesses" not in state:
+        return None
+    return "guess", {"guess": random.choice(_WORDS)}  # nosec B311
+
+
 def _default_player(state: JsonDict, player_id: str) -> tuple[str, JsonDict] | None:
     if state.get("ended"):
         return None
@@ -32,7 +43,10 @@ def _default_player(state: JsonDict, player_id: str) -> tuple[str, JsonDict] | N
     playable = state.get("playable_card_ids", [])
     if playable:
         return _auto_play_card(state, player_id)
-    return None
+    return _auto_guess(state, player_id)
+
+
+MAX_DEBUG_STEPS = 2000
 
 
 def run_debug(factory: GameFactory, players: list[str]) -> list[JsonDict]:
@@ -41,31 +55,34 @@ def run_debug(factory: GameFactory, players: list[str]) -> list[JsonDict]:
 
     auto_player = _get_auto_player(factory)
 
-    while not game.ended:
-        state = game.serialize_public()
-        player_id = state.get("current_turn")
-        if player_id:
-            action = auto_player(state, player_id)
-            if action:
-                try:
-                    game.handle_action(player_id, action[0], action[1])
-                except (ValueError, PermissionError):
-                    break
-                log.append(game.serialize_public())
-                continue
+    for _ in range(MAX_DEBUG_STEPS):
+        if game.ended:
+            break
 
-        hakem = state.get("hakem")
-        if hakem and state.get("phase") == "choose_trump":
-            action = auto_player(state, hakem)
-            if action:
-                try:
-                    game.handle_action(hakem, action[0], action[1])
-                except (ValueError, PermissionError):
-                    break
-                log.append(game.serialize_public())
-                continue
+        # The actor is whoever must move: the player to act, or the Hâkem
+        # while trump is being chosen. Per-player fields like
+        # playable_card_ids / can_choose_trump are only populated when the
+        # state is serialized from that player's perspective, so serialize
+        # for the actor rather than the global spectator view.
+        global_state = game.serialize_public()
+        actor = global_state.get("current_turn")
+        if not actor and global_state.get("phase") == "choose_trump":
+            actor = global_state.get("hakem")
+        if not actor:
+            # Turnless game (e.g. Wordle): any player may move.
+            actor = players[0] if players else None
+        if not actor:
+            break
 
-        break
+        state = game.serialize_public(player_id=actor)
+        action = auto_player(state, actor)
+        if not action:
+            break
+        try:
+            game.handle_action(actor, action[0], action[1])
+        except (ValueError, PermissionError):
+            break
+        log.append(game.serialize_public())
 
     log.append(game.serialize_public())
     return log

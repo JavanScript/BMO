@@ -88,6 +88,7 @@ def create_app(
     app.router.add_post("/api/admin/plugins/{key}/enable", admin_enable_plugin)
     app.router.add_post("/api/admin/plugins/{key}/disable", admin_disable_plugin)
     app.router.add_post("/api/admin/debug/play", admin_debug_play)
+    app.router.add_post("/api/admin/debug/session", admin_debug_session)
     app.router.add_get("/admin", admin_redirect)
     app.router.add_get("/admin/", admin_page)
     app.router.add_get("/game/{game_key}/", game_frontend_resource)
@@ -391,6 +392,41 @@ async def admin_debug_play(request: web.Request) -> web.Response:
         "players": players,
         "steps": len(log),
         "result": log[-1] if log else None,
+    })
+
+
+async def admin_debug_session(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    body = await request.json() if request.can_read_body else {}
+    game_key = str(body.get("game", ""))
+    if not game_key:
+        return web.json_response({"error": "game key required"}, status=400)
+    try:
+        info = store.registry.info(game_key)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+
+    players = [f"@debug-{i}:debug" for i in range(max(1, info.min_players))]
+    try:
+        session = store.create_session(
+            game_key=game_key,
+            lobby_id="admin-debug",
+            room_id="!admin-debug:debug",
+            players=players,
+            public_base_url=store.public_base_url,
+        )
+    except (KeyError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    return web.json_response({
+        "session_id": session.session_id,
+        "game_key": game_key,
+        "url": store.public_url(session),
+        "player_links": [
+            {"player_id": link.player_id, "url": link.url}
+            for link in store.player_links(session)
+        ],
     })
 
 
@@ -1145,6 +1181,28 @@ def _admin_html() -> str:
       return id.length > 12 ? id.slice(0, 12) + "..." : id;
     }
 
+    function renderDebugLinks(g, data) {
+      const links = data.player_links || [];
+      debugNote.className = "success";
+      debugNote.replaceChildren();
+      const title = document.createElement("div");
+      title.textContent = links.length > 1
+        ? `${g.title}: open each seat in its own tab/window to play all sides.`
+        : `${g.title}: open the link below to play.`;
+      debugNote.append(title);
+      links.forEach((link, i) => {
+        const a = document.createElement("a");
+        a.href = link.url;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = links.length > 1
+          ? `▶ Seat ${i + 1} — ${link.player_id}`
+          : `▶ Open game (${link.player_id})`;
+        a.style.cssText = "display:inline-block;margin:4px 12px 0 0;color:var(--accent)";
+        debugNote.append(a);
+      });
+    }
+
     function render(summary) {
       statusEl.textContent = "Connected";
       statusEl.className = "muted";
@@ -1163,7 +1221,7 @@ def _admin_html() -> str:
       }
 
       gamesEl.replaceChildren(table(
-        ["Key", "Title", "Players", "Private", "Source", "Debug", ""],
+        ["Key", "Title", "Players", "Private", "Source", "Debug", "Play", ""],
         summary.games,
         (g) => {
           const cells = [
@@ -1195,6 +1253,31 @@ def _admin_html() -> str:
             }
           });
           cells.push(debugBtn);
+          const playBtn = actionBtn("Play", "secondary", async () => {
+            playBtn.disabled = true;
+            playBtn.textContent = "Creating...";
+            try {
+              const res = await api("/api/admin/debug/session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ game: g.key }),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                debugNote.textContent = data.error || `Could not create session (HTTP ${res.status})`;
+                debugNote.className = "error";
+                return;
+              }
+              renderDebugLinks(g, data);
+            } catch (e) {
+              debugNote.textContent = "Play request failed (connection error).";
+              debugNote.className = "error";
+            } finally {
+              playBtn.disabled = false;
+              playBtn.textContent = "Play";
+            }
+          });
+          cells.push(playBtn);
           if (g.source === "plugin") {
             const toggleBtn = actionBtn(g.enabled ? "Disable" : "Enable", g.enabled ? "danger" : "secondary", async () => {
               const action = g.enabled ? "disable" : "enable";

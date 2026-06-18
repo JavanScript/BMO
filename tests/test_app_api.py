@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unittest import mock
+
 from aiohttp import web
+from aiohttp.streams import StreamReader
 from aiohttp.test_utils import make_mocked_request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bmo-web"))
@@ -11,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bmo-web"))
 from bmo_web.app import (
     _mint_admin_token,
     _verify_admin_token,
+    admin_debug_session,
     admin_summary,
     create_app,
     list_games,
@@ -80,6 +84,29 @@ class AppApiTest(unittest.IsolatedAsyncioTestCase):
         response = await admin_summary(request)
 
         self.assertEqual(response.status, 200)
+
+    async def test_debug_session_creates_playable_links(self) -> None:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        stream = StreamReader(protocol=mock.Mock(), limit=2**16, loop=loop)
+        stream.feed_data(b'{"game": "hokm"}')
+        stream.feed_eof()
+        request = make_mocked_request(
+            "POST",
+            "/api/admin/debug/session",
+            headers={"X-BMO-Secret": "secret", "Content-Type": "application/json"},
+            payload=stream,
+            app=self.app,
+        )
+        response = await admin_debug_session(request)
+        data = _json(response)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(data["player_links"]), 4)
+        for link in data["player_links"]:
+            self.assertIn("player_id=", link["url"])
+            self.assertIn("token=", link["url"])
 
 
 class AdminTokenTest(unittest.TestCase):
