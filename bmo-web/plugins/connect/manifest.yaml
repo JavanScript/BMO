@@ -1,0 +1,7 @@
+key: connect
+title: Connect Four
+description: Connect four of your tokens in a row — horizontally, vertically, or diagonally.
+min_players: 2
+max_players: 2
+frontend: frontend/index.html
+entrypoint: plugin:factory

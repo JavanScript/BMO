@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import json
 import os
+import shutil
 import time
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -87,6 +88,7 @@ def create_app(
     app.router.add_post("/api/admin/plugins/reload", admin_reload_plugins)
     app.router.add_post("/api/admin/plugins/{key}/enable", admin_enable_plugin)
     app.router.add_post("/api/admin/plugins/{key}/disable", admin_disable_plugin)
+    app.router.add_post("/api/admin/plugins/{key}/delete", admin_delete_plugin)
     app.router.add_post("/api/admin/debug/play", admin_debug_play)
     app.router.add_post("/api/admin/debug/session", admin_debug_session)
     app.router.add_get("/admin", admin_redirect)
@@ -456,6 +458,22 @@ async def admin_disable_plugin(request: web.Request) -> web.Response:
     _require_admin(request, store)
     key = request.match_info["key"]
     try:
+        set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, False)
+        errors = _reload_plugins(request.app)
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"ok": True, "plugin_errors": errors, "summary": _admin_summary(request.app, store)})
+
+
+async def admin_delete_plugin(request: web.Request) -> web.Response:
+    store = request.app[STORE_KEY]
+    _require_admin(request, store)
+    key = request.match_info["key"]
+    target = request.app[PLUGINS_DIR_KEY] / key
+    try:
+        if not target.exists() or not target.is_dir():
+            return web.json_response({"error": f"Plugin '{key}' not found"}, status=404)
+        shutil.rmtree(target)
         set_plugin_enabled(request.app[PLUGINS_DIR_KEY], key, False)
         errors = _reload_plugins(request.app)
     except Exception as exc:
@@ -1442,7 +1460,7 @@ def _admin_html() -> str:
       }
 
       gamesEl.replaceChildren(table(
-        ["Key", "Title", "Players", "Private", "Source", "Debug", "Play", ""],
+        ["Key", "Title", "Players", "Private", "Source", "Debug", "Play", "", ""],
         summary.games,
         (g) => {
           const cells = [
@@ -1510,6 +1528,19 @@ def _admin_html() -> str:
             toggleBtn.disabled = false;
           });
           cells.push(toggleBtn);
+          if (g.source === "plugin") {
+            const delBtn = actionBtn("Delete", "danger", async () => {
+              if (!confirm(`Delete plugin "${g.key}"? This cannot be undone.`)) return;
+              delBtn.disabled = true;
+              try {
+                const res = await api(`/api/admin/plugins/${g.key}/delete`, { method: "POST" });
+                const data = await res.json();
+                if (res.ok && data.summary) render(data.summary);
+              } catch (e) { console.error(e); }
+              delBtn.disabled = false;
+            });
+            cells.push(delBtn);
+          }
           return cells;
         }
       ));

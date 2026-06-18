@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Four in a Row</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: dark;
+  font-family: Poppins, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #171717;
+  color: #fff;
+  --c-bg: #171717;
+  --c-surface: rgba(38,38,38,.85);
+  --c-border: rgba(255,255,255,.08);
+  --c-accent: #3fb950;
+  --c-accent-glow: rgba(63,185,80,.25);
+  --c-red: #e74c3c;
+  --c-red-glow: rgba(231,76,60,.3);
+  --c-yellow: #ffb700;
+  --c-yellow-glow: rgba(255,183,0,.3);
+  --c-board: #1a1a1a;
+  --c-text: #fff;
+  --c-text-dim: #a3a3a3;
+  --radius: 10px;
+  --radius-xl: 24px;
+}
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; height: 100%; }
+body { margin: 0; min-height: 100vh; background: var(--c-bg); }
+main {
+  width: min(900px, calc(100vw - 32px));
+  margin: 0 auto; padding: 18px 16px 28px; min-width: 0;
+}
+h1 { margin: 0; font-size: 22px; letter-spacing: 0; }
+button {
+  min-height: 38px; border: 1px solid var(--c-border);
+  border-radius: 999px; font: inherit; cursor: pointer;
+  background: transparent; color: var(--c-text);
+  padding: 6px 16px; font-size: 13px; font-weight: 600;
+  transition: background .15s, transform .1s, opacity .15s;
+}
+button:hover { background: rgba(255,255,255,.06); }
+button:active { transform: scale(.97); }
+button:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+button.primary { background: var(--c-accent); color: #fff; border-color: var(--c-accent); }
+button.primary:hover { background: #4dca5e; }
+button.danger { background: var(--c-red); color: #fff; border-color: var(--c-red); }
+button.danger:hover { background: #ff5f4e; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px;
+}
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--c-border); border-radius: 999px;
+  padding: 4px 12px; background: var(--c-surface);
+  color: var(--c-text-dim); font-size: 13px; font-weight: 700;
+}
+.badge:empty { display: none; }
+.game-shell {
+  display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 14px; align-items: start; min-width: 0;
+}
+
+/* Side panel */
+.side-panel {
+  border: 1px solid var(--c-border); border-radius: var(--radius-xl);
+  background: var(--c-surface); padding: 20px;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.side-panel .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--c-text-dim); font-weight: 700; }
+.side-panel .value { font-size: 15px; font-weight: 700; }
+.timer-bar {
+  text-align: center; margin: -20px -20px 0; padding: 16px;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background: rgba(0,0,0,.2);
+}
+.timer-bar.hidden { display: none; }
+.timer-bar .timer { font-size: 28px; font-weight: 800; color: #fff; margin: 0; letter-spacing: .02em; }
+.clock-row {
+  display: flex; gap: 8px; justify-content: center;
+}
+.clock-box {
+  flex: 1; text-align: center; padding: 10px 6px; border-radius: 14px;
+  background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.06);
+  transition: border-color .2s, box-shadow .2s;
+}
+.clock-box.active { border-color: var(--c-accent); box-shadow: 0 0 8px var(--c-accent-glow); }
+.clock-box .clock-label { font-size: 10px; color: var(--c-text-dim); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.clock-box .clock-time { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.clock-box .clock-time.low { color: var(--c-red); }
+.players-box { display: flex; justify-content: center; gap: 16px; padding: 8px 0; }
+.players-box .player { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.player-circle {
+  width: 48px; height: 48px; border-radius: 50%; transition: box-shadow .2s, border .2s;
+  border: 2px solid transparent; position: relative;
+}
+.player-circle.p1 {
+  background: var(--c-red);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.08);
+}
+.player-circle.p1::after {
+  content: ''; position: absolute; inset: 3px; border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,.2) 0%, transparent 60%);
+  pointer-events: none;
+}
+.player-circle.p2 {
+  background: var(--c-yellow);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.08);
+}
+.player-circle.p2::after {
+  content: ''; position: absolute; inset: 3px; border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,.2) 0%, transparent 60%);
+  pointer-events: none;
+}
+.player-circle.active { border-color: #fff; border-width: 3px; box-shadow: 0 0 0 2px rgba(255,255,255,.12); }
+.player-name { font-size: 13px; font-weight: 700; color: var(--c-text); text-align: center; overflow: hidden; text-overflow: ellipsis; max-width: 100px; white-space: nowrap; }
+.stat-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+.stat-row:last-child { border-bottom: 0; }
+.stat-row .stat-label { font-size: 12px; color: var(--c-text-dim); }
+.stat-row .stat-value { font-size: 14px; font-weight: 700; }
+.buttons-box { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
+
+/* Board */
+.board-wrap {
+  border: 1px solid var(--c-border); border-radius: var(--radius-xl);
+  background: radial-gradient(ellipse at 50% 30%, #2a2a2a, #1e1e1e);
+  padding: 20px;
+  box-shadow: 0 20px 48px rgba(0,0,0,.4);
+}
+.arrows-row {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 6px;
+  padding: 0 2px;
+}
+.arrow-btn {
+  aspect-ratio: 1; border-radius: 50%; border: 1px solid var(--c-border);
+  background: var(--c-surface); cursor: pointer; display: grid; place-items: center;
+  font-size: 14px; color: var(--c-text-dim); transition: background .15s, color .15s, box-shadow .15s;
+  min-height: 0; padding: 0; min-width: 0;
+}
+.arrow-btn:hover:not(:disabled) { background: rgba(255,255,255,.12); color: var(--c-text); box-shadow: 0 0 12px var(--c-accent-glow); }
+.arrow-btn:disabled { opacity: .25; cursor: not-allowed; }
+.board {
+  display: grid; grid-template-rows: repeat(6, 1fr); gap: 4px;
+}
+.board-row {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+}
+.cell {
+  aspect-ratio: 1; border-radius: 50%; background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1); position: relative; overflow: visible;
+  transition: background .15s, box-shadow .15s;
+}
+.cell.p1 {
+  background: var(--c-red);
+  box-shadow: 0 2px 8px rgba(0,0,0,.3), 0 0 0 1px rgba(255,255,255,.08);
+}
+.cell.p1::after {
+  content: ''; position: absolute; inset: 2px; border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,.15) 0%, transparent 60%);
+  pointer-events: none;
+}
+.cell.p2 {
+  background: var(--c-yellow);
+  box-shadow: 0 2px 8px rgba(0,0,0,.3), 0 0 0 1px rgba(255,255,255,.08);
+}
+.cell.p2::after {
+  content: ''; position: absolute; inset: 2px; border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,.15) 0%, transparent 60%);
+  pointer-events: none;
+}
+.cell.win { border: 3px solid var(--c-accent); box-shadow: 0 0 12px var(--c-accent-glow), 0 0 30px var(--c-accent-glow); animation: pulse-win .8s ease infinite; }
+@keyframes pulse-win {
+  0%, 100% { box-shadow: 0 0 8px var(--c-accent-glow), 0 0 20px var(--c-accent-glow); }
+  50% { box-shadow: 0 0 20px var(--c-accent-glow), 0 0 40px var(--c-accent-glow); }
+}
+.cell.dropping { animation: drop-in .28s cubic-bezier(0.22, 1, 0.36, 1); z-index: 1; }
+@keyframes drop-in {
+  0% { transform: translateY(calc(var(--fall-dist) * -1px)); opacity: .7; }
+  65% { transform: translateY(3%); }
+  80% { transform: translateY(-1.5%); }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.msg-bar {
+  margin-top: 10px; text-align: center; font-size: 14px; font-weight: 600;
+  min-height: 22px; color: var(--c-text-dim);
+}
+.bottom-actions { text-align: center; margin-top: 10px; }
+
+/* Setup overlay */
+.setup-overlay {
+  display: none; position: fixed; inset: 0; z-index: 20;
+  place-items: center;
+  background: rgba(0,0,0,.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.setup-card {
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 24px; padding: 40px; max-width: 400px; width: 92%;
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  animation: modal-in .3s ease-out; text-align: center;
+  box-shadow: 0 24px 64px rgba(0,0,0,.35);
+}
+@keyframes modal-in {
+  0% { transform: scale(.88); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.setup-card h2 { margin: 0 0 4px; font-size: 26px; }
+.setup-card .sub { color: var(--c-text-dim); font-size: 14px; margin-bottom: 24px; }
+.setup-group { margin-bottom: 20px; text-align: left; }
+.setup-group .group-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--c-text-dim); margin-bottom: 10px; }
+.setup-group .opt-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.setup-group .opt-btn {
+  flex: 1; min-width: 70px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(255,255,255,.04); border: 1px solid var(--c-border);
+  color: var(--c-text-dim); font-size: 13px; font-weight: 600; cursor: pointer;
+  text-align: center; transition: all .15s; min-height: 0;
+}
+.setup-group .opt-btn:hover { background: rgba(255,255,255,.08); }
+.setup-group .opt-btn.sel { border-color: var(--c-accent); background: rgba(63,185,80,.12); color: var(--c-accent); box-shadow: 0 0 8px var(--c-accent-glow); }
+.setup-card .start-btn { margin-top: 8px; width: 100%; min-height: 44px; font-size: 15px; }
+.setup-card .waiting-msg { margin-top: 12px; color: var(--c-text-dim); font-size: 14px; }
+
+/* Win banner */
+.win-banner {
+  text-align: center; padding: 12px; margin-bottom: 8px;
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: var(--radius-xl); animation: modal-in .3s ease-out;
+}
+.win-banner h2 { margin: 0; font-size: 20px; }
+.win-banner .sub { color: var(--c-text-dim); font-size: 13px; margin-top: 2px; }
+.win-banner.winner h2 { color: var(--c-accent); }
+
+/* Play overlay */
+.play-overlay {
+  position: absolute; inset: 0; z-index: 15;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: rgba(0,0,0,.35); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  border-radius: var(--radius-xl);
+}
+.play-btn { font-size: 18px; padding: 14px 40px; min-height: 52px; }
+.play-msg { color: var(--c-text-dim); font-size: 14px; }
+
+/* Win line SVG */
+.win-line-wrap { position: relative; }
+.win-line-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+.win-line-svg line { stroke: var(--c-accent); stroke-width: 4; stroke-linecap: round; filter: drop-shadow(0 0 6px var(--c-accent-glow)); }
+
+/* Mobile */
+@media (max-width: 720px) {
+  main { padding: 8px 12px 12px; width: min(100%, calc(100vw - 12px)); }
+  .topbar { margin-bottom: 6px; flex-wrap: wrap; gap: 6px; }
+  .topbar h1 { font-size: 16px; }
+  .game-shell { grid-template-columns: 1fr; gap: 6px; }
+  .side-panel {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 0;
+    align-items: center; border: none; background: none; backdrop-filter: none;
+  }
+  .side-panel .timer-bar { margin: 0; border-radius: 999px; padding: 6px 14px; background: rgba(0,0,0,.2); }
+  .side-panel .timer-bar.hidden { display: none; }
+  .side-panel .timer-bar .timer { font-size: 16px; }
+  .side-panel .clock-row { flex: 1; gap: 4px; }
+  .side-panel .clock-box { padding: 4px 8px; }
+  .side-panel .clock-box .clock-time { font-size: 16px; }
+  .side-panel .clock-box .clock-label { font-size: 8px; }
+  .side-panel .players-box { gap: 8px; padding: 0; flex: 1; }
+  .side-panel .player-circle { width: 32px; height: 32px; }
+  .side-panel .player-name { font-size: 10px; max-width: 60px; }
+  .side-panel .stat-row { display: none; }
+  .side-panel .buttons-box { flex-direction: row; gap: 4px; margin: 0; }
+  .side-panel .buttons-box button { min-height: 30px; font-size: 11px; padding: 4px 10px; }
+  .board-wrap { padding: 12px; }
+  .board, .board-row { gap: 3px; }
+  .arrow-btn { font-size: 11px; min-height: 30px; }
+  .msg-bar { font-size: 12px; min-height: 20px; }
+  .badge { font-size: 11px; padding: 2px 8px; min-height: 24px; }
+  .cell { min-width: 40px; min-height: 40px; }
+  .setup-card { padding: 24px 20px; }
+  .setup-card h2 { font-size: 22px; }
+}
+
+@media (max-width: 400px) {
+  .side-panel .player-circle { width: 26px; height: 26px; }
+  .side-panel .player-name { max-width: 40px; font-size: 9px; }
+  .arrow-btn { min-height: 26px; font-size: 10px; }
+  .board, .board-row { gap: 2px; }
+  .board-wrap { padding: 4px; }
+  .cell { min-width: 36px; min-height: 36px; }
+  .side-panel .clock-box .clock-time { font-size: 13px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>Four in a Row</h1>
+      <span id="phaseBadge" class="badge">Setup</span>
+    </div>
+    <div id="identity" class="badge"></div>
+  </div>
+
+  <div class="game-shell">
+    <aside class="side-panel">
+      <div class="timer-bar">
+        <div class="clock-row" id="clockRow">
+          <div class="clock-box" id="clock1">
+            <div class="clock-label" id="clockLabel1">P1</div>
+            <div class="clock-time" id="clockTime1">--:--</div>
+          </div>
+          <div class="clock-box" id="clock2">
+            <div class="clock-label" id="clockLabel2">P2</div>
+            <div class="clock-time" id="clockTime2">--:--</div>
+          </div>
+        </div>
+      </div>
+      <div class="players-box">
+        <div class="player">
+          <div class="player-circle p1" id="indicator1"></div>
+          <span class="player-name" id="name1">Player 1</span>
+        </div>
+        <div class="player">
+          <div class="player-circle p2" id="indicator2"></div>
+          <span class="player-name" id="name2">Player 2</span>
+        </div>
+      </div>
+      <div>
+        <div class="stat-row"><span class="stat-label">Turn</span><span class="stat-value" id="turnCount">0</span></div>
+        <div class="stat-row"><span class="stat-label">Win Condition</span><span class="stat-value" id="winLabel">4</span></div>
+        <div class="stat-row"><span class="stat-label">Timer</span><span class="stat-value" id="timerLabel">—</span></div>
+        <div class="stat-row"><span class="stat-label">Status</span><span class="stat-value" id="statusText">Configuring</span></div>
+      </div>
+      <div class="buttons-box">
+        <button id="forfeitBtn" class="danger">Forfeit</button>
+        <button id="newGameBtn">New Game</button>
+      </div>
+    </aside>
+
+    <div class="board-wrap win-line-wrap">
+      <div class="win-banner" id="winBanner" style="display:none">
+        <h2 id="bannerTitle">Winner!</h2>
+        <div class="sub" id="bannerSub"></div>
+      </div>
+      <div class="play-overlay" id="playOverlay" style="display:none">
+        <button class="primary play-btn" id="playBtn">▶  Play</button>
+        <p class="play-msg" id="playMsg"></p>
+      </div>
+      <div class="arrows-row" id="arrowsRow"></div>
+      <div class="board" id="board"></div>
+      <svg class="win-line-svg" id="winLine" style="display:none"></svg>
+      <div class="msg-bar" id="messageBar"></div>
+      <div class="bottom-actions" id="bottomActions" style="display:none">
+        <button class="primary" id="endPlayAgain">Play Again</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="setup-overlay" id="setupOverlay">
+  <div class="setup-card">
+    <h2>Game Settings</h2>
+    <p class="sub" id="setupSub">Player 1, configure the game</p>
+    <div class="setup-group">
+      <div class="group-label">Win condition</div>
+      <div class="opt-row" id="winOpts">
+        <div class="opt-btn sel" data-value="4">4 in a Row</div>
+        <div class="opt-btn" data-value="5">5 in a Row</div>
+      </div>
+    </div>
+    <div class="setup-group">
+      <div class="group-label">Time limit</div>
+      <div class="opt-row" id="timerOpts">
+        <div class="opt-btn sel" data-value="0">No limit</div>
+        <div class="opt-btn" data-value="30">30s</div>
+        <div class="opt-btn" data-value="60">60s</div>
+        <div class="opt-btn" data-value="120">120s</div>
+      </div>
+    </div>
+    <div class="setup-group" id="timerModeGroup">
+      <div class="group-label">Timer mode</div>
+      <div class="opt-row" id="timerModeOpts">
+        <div class="opt-btn sel" data-value="move">Per Move</div>
+        <div class="opt-btn" data-value="total">Total</div>
+      </div>
+    </div>
+    <button class="primary start-btn" id="startBtn">Start Game</button>
+    <p class="waiting-msg" id="waitingMsg" style="display:none">Waiting for Player 1 to configure...</p>
+  </div>
+</div>
+
+<script>
+var sessionId = "";
+try { sessionId = __SESSION_JSON__; } catch (e) {}
+
+const params = new URLSearchParams(window.location.search);
+const playerId = params.get("player_id") || "";
+const token = params.get("token") || "";
+const authQuery = new URLSearchParams({ player_id: playerId, token });
+
+let state = null;
+let timerInterval = null;
+let clockInterval = null;
+let seconds = 0;
+let animating = false;
+let lastDrop = null;
+let selectedWin = 4;
+let selectedTime = 0;
+let selectedTimeMode = "move";
+let lastSyncTime = 0;
+let lastRemaining = 0;
+let lastWinCells = null;
+
+const $ = (id) => document.getElementById(id);
+const boardEl = $("board");
+const arrowsRow = $("arrowsRow");
+const messageBar = $("messageBar");
+const turnCount = $("turnCount");
+const winLabel = $("winLabel");
+const timerLabel = $("timerLabel");
+const statusText = $("statusText");
+const phaseBadge = $("phaseBadge");
+const identityEl = $("identity");
+const name1 = $("name1");
+const name2 = $("name2");
+const indicator1 = $("indicator1");
+const indicator2 = $("indicator2");
+const winBanner = $("winBanner");
+const bannerTitle = $("bannerTitle");
+const bannerSub = $("bannerSub");
+const bottomActions = $("bottomActions");
+const endPlayAgain = $("endPlayAgain");
+const forfeitBtn = $("forfeitBtn");
+const newGameBtn = $("newGameBtn");
+const setupOverlay = $("setupOverlay");
+const setupSub = $("setupSub");
+const startBtn = $("startBtn");
+const waitingMsg = $("waitingMsg");
+const winOpts = $("winOpts");
+const timerOpts = $("timerOpts");
+const clock1 = $("clock1");
+const clock2 = $("clock2");
+const clockTime1 = $("clockTime1");
+const clockTime2 = $("clockTime2");
+const clockLabel1 = $("clockLabel1");
+const clockLabel2 = $("clockLabel2");
+const playOverlay = $("playOverlay");
+const playBtn = $("playBtn");
+const playMsg = $("playMsg");
+const winLine = $("winLine");
+
+function shortName(p) {
+  return (p || "").replace(/^@/, "").split(":")[0] || p || "";
+}
+
+function formatTime(s) {
+  if (s == null || s < 0) return "--:--";
+  var m = String(Math.floor(s / 60)).padStart(2, "0");
+  var sec = String(Math.floor(s % 60)).padStart(2, "0");
+  return m + ":" + sec;
+}
+
+function formatClock(s) {
+  if (s == null || s < 0) return "--:--";
+  if (s >= 60) {
+    var m = String(Math.floor(s / 60)).padStart(2, "0");
+    var sec = String(Math.floor(s % 60)).padStart(2, "0");
+    return m + ":" + sec;
+  }
+  return "0:" + String(Math.max(0, Math.floor(s))).padStart(2, "0");
+}
+
+function startTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  seconds = 0;
+  timerInterval = setInterval(function () { seconds++; }, 1000);
+}
+
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+function setMsg(msg, isError) {
+  messageBar.textContent = msg;
+  messageBar.style.color = isError ? "var(--c-red)" : "var(--c-text-dim)";
+}
+
+function setupSelector(container, cb) {
+  var btns = container.querySelectorAll(".opt-btn");
+  btns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      btns.forEach(function (x) { x.classList.remove("sel"); });
+      b.classList.add("sel");
+      cb(b.dataset.value);
+    });
+  });
+}
+
+setupSelector(winOpts, function (v) { selectedWin = parseInt(v); });
+setupSelector(timerOpts, function (v) {
+  selectedTime = parseInt(v);
+  document.getElementById("timerModeGroup").style.display = selectedTime > 0 ? "" : "none";
+});
+setupSelector(timerModeOpts, function (v) { selectedTimeMode = v; });
+document.getElementById("timerModeGroup").style.display = "none";
+
+function render(data) {
+  state = data;
+  var board = data.board || [];
+  var cp = data.current_player || 1;
+  var winner = data.winner || 0;
+  var players = data.players || ["Player 1", "Player 2"];
+  var ended = data.ended || false;
+  var started = data.started || false;
+  var myNum = data.player_number || 0;
+  var isMyTurn = myNum ? cp === myNum : true;
+
+  name1.textContent = shortName(players[0] || "Player 1");
+  name2.textContent = shortName(players[1] || "Player 2");
+  turnCount.textContent = data.turn_count || 0;
+  winLabel.textContent = (data.win_length || 4) + " in a row";
+  var tm = data.time_mode || "move";
+  if (data.time_limit > 0) timerLabel.textContent = data.time_limit + "s" + (tm === "total" ? " total" : " per move");
+  else timerLabel.textContent = "—";
+
+  indicator1.classList.toggle("active", cp === 1 && !ended && data.playing);
+  indicator2.classList.toggle("active", cp === 2 && !ended && data.playing);
+
+  if (!started) {
+    phaseBadge.textContent = "Setup";
+    statusText.textContent = "Configuring";
+    forfeitBtn.disabled = true;
+    setupBoard(board, cp, ended, started, isMyTurn, data);
+    updateArrows(ended, true, data);
+    setupOverlay.style.display = "grid";
+    if (myNum === 1) {
+      setupSub.textContent = "Configure the game";
+      waitingMsg.style.display = "none";
+      startBtn.style.display = "block";
+      startBtn.disabled = false;
+      winOpts.querySelectorAll(".opt-btn").forEach(function (b) { b.style.pointerEvents = "auto"; });
+      timerOpts.querySelectorAll(".opt-btn").forEach(function (b) { b.style.pointerEvents = "auto"; });
+    } else if (players.includes(playerId)) {
+      setupSub.textContent = "Waiting for Player 1 to configure...";
+      waitingMsg.style.display = "block";
+      startBtn.style.display = "none";
+      winOpts.querySelectorAll(".opt-btn").forEach(function (b) { b.style.pointerEvents = "none"; });
+      timerOpts.querySelectorAll(".opt-btn").forEach(function (b) { b.style.pointerEvents = "none"; });
+    }
+    return;
+  }
+
+    setupOverlay.style.display = "none";
+    forfeitBtn.disabled = ended;
+
+    // Configured but not yet playing
+    if (started && !data.playing) {
+      phaseBadge.textContent = "Ready";
+      winBanner.style.display = "none";
+      bottomActions.style.display = "none";
+      playOverlay.style.display = "flex";
+      if (myNum === 2) {
+        playBtn.style.display = "block";
+        playMsg.textContent = "Press Play to start the game!";
+      } else {
+        playBtn.style.display = "none";
+        playMsg.textContent = "Waiting for opponent to start the game...";
+      }
+    statusText.textContent = "Waiting to start";
+    statusText.style.color = "var(--c-text-dim)";
+    setupBoard(board, cp, ended, started, isMyTurn, data);
+    updateArrows(true, true, data);
+    updateClocks(data, ended);
+    drawWinLine([]);
+    return;
+  }
+  playOverlay.style.display = "none";
+
+  if (ended) {
+    phaseBadge.textContent = winner ? "Finished" : "Draw";
+    stopTimer();
+    if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+    statusText.textContent = winner ? shortName(players[winner - 1]) + " wins!" : "Draw";
+    statusText.style.color = winner ? "var(--c-accent)" : "var(--c-red)";
+    winBanner.style.display = "block";
+    winBanner.className = "win-banner" + (winner ? " winner" : "");
+    bottomActions.style.display = "block";
+    if (winner) {
+      bannerTitle.textContent = "Winner!";
+      bannerSub.textContent = shortName(players[winner - 1]) + " wins!";
+    } else {
+      bannerTitle.textContent = "Draw!";
+      bannerSub.textContent = "No more moves left.";
+    }
+    clockTime1.textContent = formatClock(data.player_times ? data.player_times[0] : -1);
+    clockTime2.textContent = formatClock(data.player_times ? data.player_times[1] : -1);
+    clock1.classList.remove("active");
+    clock2.classList.remove("active");
+  } else {
+    winBanner.style.display = "none";
+    bottomActions.style.display = "none";
+    if (!timerInterval) startTimer();
+    if (myNum) {
+      statusText.textContent = isMyTurn ? "Your turn" : "Opponent's turn";
+    } else {
+      statusText.textContent = "Player " + cp + "'s turn";
+    }
+    statusText.style.color = "var(--c-text-dim)";
+    phaseBadge.textContent = myNum && isMyTurn ? "Your turn" : myNum ? "Waiting" : "Player " + cp + "'s turn";
+  }
+
+  setupBoard(board, cp, ended, started, isMyTurn, data);
+  updateArrows(ended, !isMyTurn || !data.playing, data);
+  updateClocks(data, ended);
+  drawWinLine(data.win_cells || []);
+}
+
+function drawWinLine(cells) {
+  lastWinCells = cells;
+  winLine.style.display = "none";
+  winLine.innerHTML = "";
+  if (!cells || cells.length < 2) return;
+  var first = document.querySelector('.cell[data-row="' + cells[0][0] + '"][data-col="' + cells[0][1] + '"]');
+  var last = document.querySelector('.cell[data-row="' + cells[cells.length - 1][0] + '"][data-col="' + cells[cells.length - 1][1] + '"]');
+  if (!first || !last) return;
+  var wr = document.querySelector(".board-wrap").getBoundingClientRect();
+  var pos = function (el) {
+    var r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2 - wr.left, y: r.top + r.height / 2 - wr.top };
+  };
+  var p1 = pos(first), p2 = pos(last);
+  winLine.style.display = "block";
+  winLine.setAttribute("viewBox", "0 0 " + wr.width + " " + wr.height);
+  winLine.innerHTML = '<line x1="' + p1.x + '" y1="' + p1.y + '" x2="' + p2.x + '" y2="' + p2.y + '"/>';
+}
+
+
+function setupBoard(board, cp, ended, started, isMyTurn, data) {
+  var winCells = data.win_cells || [];
+  var winSet = new Set(winCells.map(function (c) { return c[0] + "," + c[1]; }));
+  boardEl.innerHTML = "";
+  for (var r = 0; r < 6; r++) {
+    var rowDiv = document.createElement("div");
+    rowDiv.className = "board-row";
+    for (var c = 0; c < 7; c++) {
+      var cell = document.createElement("div");
+      cell.className = "cell";
+      cell.dataset.row = r;
+      cell.dataset.col = c;
+      var val = (board[r] && board[r][c]) || 0;
+      if (val === 1) cell.classList.add("p1");
+      if (val === 2) cell.classList.add("p2");
+      if (winSet.has(r + "," + c)) cell.classList.add("win");
+      if (lastDrop && lastDrop.row === r && lastDrop.col === c && val) {
+        cell.classList.add("dropping");
+        cell.style.setProperty("--fall-dist", (lastDrop.px || 120) + "px");
+      }
+      var clickable = val === 0 && started && !ended && isMyTurn;
+      if (clickable) {
+        cell.style.cursor = "pointer";
+        cell.addEventListener("click", function (cc) { return function (e) { drop(cc, e); }; }(c));
+      }
+      rowDiv.appendChild(cell);
+    }
+    boardEl.appendChild(rowDiv);
+  }
+  if (lastDrop) { setTimeout(function () { lastDrop = null; }, 350); }
+}
+
+function updateArrows(ended, isDisabled, data) {
+  arrowsRow.innerHTML = "";
+  for (var c = 0; c < 7; c++) {
+    var btn = document.createElement("button");
+    btn.className = "arrow-btn";
+    btn.textContent = "\u25BC";
+    btn.dataset.col = c;
+    var full = data && data.board ? data.board[0][c] !== 0 : false;
+    btn.disabled = ended || isDisabled || full;
+    btn.title = full ? "Full" : isDisabled ? "Not your turn" : "Drop here";
+    if (!btn.disabled) btn.addEventListener("click", function (cc) { return function (e) { drop(cc, e); }; }(c));
+    arrowsRow.appendChild(btn);
+  }
+}
+
+function updateClocks(data, ended) {
+  var tl = data.time_limit || 0;
+  var pts = data.player_times || [0, 0];
+  var cp = data.current_player || 1;
+  document.querySelector('.timer-bar').classList.toggle('hidden', tl <= 0);
+
+  if (tl <= 0 || !data.started || !data.playing) {
+    clockTime1.textContent = "--:--";
+    clockTime2.textContent = "--:--";
+    clock1.classList.remove("active");
+    clock2.classList.remove("active");
+    if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+    return;
+  }
+
+  clock1.classList.toggle("active", cp === 1 && !ended);
+  clock2.classList.toggle("active", cp === 2 && !ended);
+
+  clockLabel1.textContent = name1.textContent;
+  clockLabel2.textContent = name2.textContent;
+
+  // Sync from server: store remaining + local timestamp
+  lastSyncTime = Date.now();
+  lastRemaining = data.remaining || pts[cp === 1 ? 0 : 1];
+
+  if (clockInterval) clearInterval(clockInterval);
+  clockInterval = setInterval(function () {
+    var ptsLive = state && state.player_times ? state.player_times.slice() : pts;
+    var cpLive = (state && state.current_player) || cp;
+    if (!ended && lastSyncTime > 0) {
+      var elapsed = (Date.now() - lastSyncTime) / 1000;
+      var idx = cpLive === 1 ? 0 : 1;
+      ptsLive[idx] = Math.max(0, lastRemaining - elapsed);
+    }
+    clockTime1.textContent = formatClock(ptsLive[0]);
+    clockTime2.textContent = formatClock(ptsLive[1]);
+    clockTime1.classList.toggle("low", ptsLive[0] <= 10);
+    clockTime2.classList.toggle("low", ptsLive[1] <= 10);
+  }, 200);
+}
+
+function isColumnFull(col) {
+  return state && state.board ? state.board[0][col] !== 0 : false;
+}
+
+function findEmptyRow(col) {
+  if (!state || !state.board) return -1;
+  for (var r = 5; r >= 0; r--) { if (state.board[r][col] === 0) return r; }
+  return -1;
+}
+
+function dropDist(col, emptyRow, event) {
+  if (event && event.clientY) {
+    var boardEl = document.querySelector('.board');
+    if (boardEl) {
+      var rect = boardEl.getBoundingClientRect();
+      var cellH = rect.height / 6;
+      var targetY = rect.top + emptyRow * cellH + cellH / 2;
+      return Math.max(targetY - event.clientY, 20);
+    }
+  }
+  return (5 - emptyRow + 1) * 60 + 30;
+}
+
+async function drop(col, event) {
+  if (animating || !state || state.ended || !state.started) return;
+  var emptyRow = findEmptyRow(col);
+  if (emptyRow === -1) { setMsg("Column is full!"); return; }
+  setMsg("");
+  animating = true;
+
+  if (!playerId || !token) {
+    var cp = state.current_player || 1;
+    var newBoard = state.board.map(function (r) { return r.slice(); });
+    newBoard[emptyRow][col] = cp;
+    var next = cp === 1 ? 2 : 1;
+    var winCells = checkWinLocal(newBoard, emptyRow, col, cp, state.win_length || 4);
+    var isDraw = !winCells && newBoard.every(function (r) { return r.every(function (c) { return c !== 0; }); });
+    lastDrop = { row: emptyRow, col: col, px: dropDist(col, emptyRow, event) };
+    var newState = {
+      board: newBoard,
+      current_player: next,
+      winner: winCells ? cp : 0,
+      ended: !!winCells || isDraw,
+      players: state.players,
+      turn_count: (state.turn_count || 0) + 1,
+      started: true,
+      win_length: state.win_length || 4,
+      time_limit: state.time_limit || 0,
+      player_times: state.player_times || [0, 0],
+      move_deadline: state.move_deadline || 0,
+      settings_lock: true,
+    };
+    if (winCells) newState.win_cells = winCells;
+    render(newState);
+    animating = false;
+    return;
+  }
+
+  lastDrop = { row: emptyRow, col: col, px: dropDist(col, emptyRow, event) };
+  try {
+    var res = await fetch("/api/sessions/" + sessionId + "/actions?" + authQuery, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "drop", payload: { column: col } }),
+    });
+    var data;
+    try { data = await res.json(); } catch (_) { setMsg("Server error", true); animating = false; return; }
+    setMsg(data.error || data.message || "");
+    if (data.session) render(data.session);
+  } catch (e) {
+    setMsg("Network error", true);
+  }
+  animating = false;
+}
+
+function checkWinLocal(board, row, col, player, winLen) {
+  var dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  for (var d = 0; d < dirs.length; d++) {
+    var dr = dirs[d][0], dc = dirs[d][1];
+    var cells = [[row, col]];
+    for (var si = 0; si < 2; si++) {
+      var sign = si === 0 ? 1 : -1;
+      var r = row + dr * sign, c = col + dc * sign;
+      while (r >= 0 && r < 6 && c >= 0 && c < 7 && board[r][c] === player) {
+        cells.push([r, c]);
+        r += dr * sign;
+        c += dc * sign;
+      }
+    }
+    if (cells.length >= (winLen || 4)) return cells;
+  }
+  return null;
+}
+
+async function forfeit() {
+  if (!state || state.ended || !state.started) return;
+  if (!confirm("Forfeit the game? Your opponent will win.")) return;
+  if (!playerId || !token) {
+    var cp = state.current_player || 1;
+    var opp = cp === 1 ? 2 : 1;
+    var newState = Object.assign({}, state, { winner: opp, ended: true });
+    render(newState);
+    return;
+  }
+  try {
+    var res = await fetch("/api/sessions/" + sessionId + "/actions?" + authQuery, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "forfeit", payload: {} }),
+    });
+    var data;
+    try { data = await res.json(); } catch (_) { return; }
+    if (data.session) render(data.session);
+  } catch (e) {}
+}
+
+async function resetGame() {
+  if (state && state.started && !state.ended) {
+    if (!confirm("Reset the board? Current game will be lost.")) return;
+  }
+  lastDrop = null;
+  winBanner.style.display = "none";
+  bottomActions.style.display = "none";
+  stopTimer();
+  if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+  setMsg("");
+
+  if (!playerId || !token) {
+    render({
+      board: Array.from({ length: 6 }, function () { return Array(7).fill(0); }),
+      current_player: 1, winner: 0, ended: false,
+      players: state ? state.players : ["Player 1", "Player 2"],
+      turn_count: 0, started: false, win_length: 4, time_limit: 0,
+      player_times: [0, 0], move_deadline: 0, settings_lock: false,
+    });
+    return;
+  }
+  try {
+    var res = await fetch("/api/sessions/" + sessionId + "/actions?" + authQuery, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reset", payload: {} }),
+    });
+    var data;
+    try { data = await res.json(); } catch (_) { refresh(); return; }
+    if (data.session) render(data.session);
+    else refresh();
+  } catch (e) { refresh(); }
+}
+
+async function startGame() {
+  if (!playerId || !token) {
+    var s = state || {};
+    render(Object.assign({}, s, {
+      started: true, playing: true, win_length: selectedWin, time_limit: selectedTime,
+      player_times: selectedTime > 0 ? [selectedTime, selectedTime] : [0, 0],
+      move_deadline: selectedTime > 0 ? Date.now() / 1000 + selectedTime : 0,
+      settings_lock: true,
+      board: Array.from({ length: 6 }, function () { return Array(7).fill(0); }),
+      current_player: 1, winner: 0, ended: false, turn_count: 0,
+    }));
+    return;
+  }
+  try {
+    var res = await fetch("/api/sessions/" + sessionId + "/actions?" + authQuery, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "start", payload: { win_length: selectedWin, time_limit: selectedTime, time_mode: selectedTimeMode } }),
+    });
+    var data;
+    try { data = await res.json(); } catch (_) { refresh(); return; }
+    if (data.session) render(data.session);
+    else refresh();
+  } catch (e) { refresh(); }
+}
+
+async function refresh() {
+  if (!playerId || !token) {
+    render({
+      board: Array.from({ length: 6 }, function () { return Array(7).fill(0); }),
+      current_player: 1, winner: 0, ended: false,
+      players: ["Player 1", "Player 2"], turn_count: 0,
+      started: false, win_length: 4, time_limit: 0,
+      player_times: [0, 0], move_deadline: 0, settings_lock: false,
+    });
+    identityEl.textContent = "Local 2-Player";
+    return;
+  }
+  try {
+    var res = await fetch("/api/sessions/" + sessionId + "?" + authQuery);
+    var data;
+    try { data = await res.json(); } catch (_) { setMsg("Load error", true); return; }
+    if (!res.ok) { setMsg(data.error || "Load error", true); return; }
+    render(data);
+  } catch (e) {
+    setMsg("Could not load game", true);
+  }
+}
+
+function connectEvents() {
+  if (!playerId || !token) return;
+  var es = new EventSource("/api/sessions/" + sessionId + "/events?" + authQuery);
+  es.addEventListener("state", function (e) {
+    try { render(JSON.parse(e.data)); }
+    catch (_) { setMsg("Bad server update", true); }
+  });
+  es.addEventListener("error", function () { setMsg("Live connection lost — refresh", true); });
+}
+
+window.addEventListener("error", function (e) {
+  setMsg("Something went wrong — refresh", true);
+  console.error(e);
+});
+window.addEventListener("resize", function () {
+  if (lastWinCells) drawWinLine(lastWinCells);
+});
+
+startBtn.addEventListener("click", startGame);
+endPlayAgain.addEventListener("click", resetGame);
+playBtn.addEventListener("click", async function () {
+  if (!playerId || !token) return;
+  try {
+    var res = await fetch("/api/sessions/" + sessionId + "/actions?" + authQuery, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "play", payload: {} }),
+    });
+    var data;
+    try { data = await res.json(); } catch (_) { refresh(); return; }
+    if (data.session) render(data.session);
+    else refresh();
+  } catch (e) { refresh(); }
+});
+forfeitBtn.addEventListener("click", forfeit);
+newGameBtn.addEventListener("click", resetGame);
+
+refresh();
+connectEvents();
+</script>
+</body>
+</html>
