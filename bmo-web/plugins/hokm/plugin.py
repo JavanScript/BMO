@@ -6,9 +6,9 @@ from bmo_web.games.hokm import HokmFactory
 
 class HokmPluginFactory:
     info = GameInfo(
-        key="hokm-example",
-        title="Hokm / حکم (Plugin Example)",
-        description="Four-player Iranian trick-taking with Hâkem and trump. Example plugin.",
+        key="hokm",
+        title="Hokm / حکم",
+        description="Four-player Iranian trick-taking with Hâkem and trump.",
         min_players=4,
         max_players=4,
         private_player_links=True,

@@ -4,8 +4,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .base import Game, GameFactory, GameInfo, GamePlugin, JsonDict
-from .hokm import HokmFactory
-from .wordle import WordleFactory
+
 
 
 @dataclass(frozen=True)
@@ -21,10 +20,7 @@ class GameRegistry:
 
     @classmethod
     def defaults(cls) -> "GameRegistry":
-        registry = cls()
-        registry.register(HokmFactory())
-        registry.register(WordleFactory())
-        return registry
+        return cls()
 
     def register(
         self,

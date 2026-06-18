@@ -1,0 +1,5 @@
+key: wordle
+title: Wordle
+description: Guess a five-letter word in six tries.
+min_players: 1
+entrypoint: plugin:factory
