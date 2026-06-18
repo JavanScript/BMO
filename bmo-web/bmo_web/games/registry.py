@@ -82,6 +82,9 @@ class GameRegistry:
     def _get_factory(self, key: str) -> GameFactory:
         return self._get_game(key).factory
 
+    def remove(self, key: str) -> None:
+        self._games.pop(key.lower().strip(), None)
+
     def _get_game(self, key: str) -> RegisteredGame:
         normalized = key.lower().strip()
         try:

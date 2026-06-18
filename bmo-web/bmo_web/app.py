@@ -121,9 +121,12 @@ async def create_session(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON body"}, status=400)
 
     display_names = body.get("display_names", {})
+    game_key = str(body.get("game", ""))
+    if not _is_plugin_enabled(request.app[PLUGINS_DIR_KEY], game_key):
+        return web.json_response({"error": f"Game '{game_key}' is disabled."}, status=400)
     try:
         session = store.create_session(
-            game_key=body["game"],
+            game_key=game_key,
             lobby_id=body["lobby_id"],
             room_id=body["room_id"],
             players=body.get("players", []),
@@ -374,6 +377,8 @@ async def admin_debug_play(request: web.Request) -> web.Response:
     game_key = str(body.get("game", ""))
     if not game_key:
         return web.json_response({"error": "game key required"}, status=400)
+    if not _is_plugin_enabled(request.app[PLUGINS_DIR_KEY], game_key):
+        return web.json_response({"error": f"Game '{game_key}' is disabled."}, status=400)
     try:
         info = store.registry.info(game_key)
         factory = store.registry.get_factory(game_key)
@@ -402,6 +407,8 @@ async def admin_debug_session(request: web.Request) -> web.Response:
     game_key = str(body.get("game", ""))
     if not game_key:
         return web.json_response({"error": "game key required"}, status=400)
+    if not _is_plugin_enabled(request.app[PLUGINS_DIR_KEY], game_key):
+        return web.json_response({"error": f"Game '{game_key}' is disabled."}, status=400)
     try:
         info = store.registry.info(game_key)
     except ValueError as exc:
@@ -557,10 +564,7 @@ def _admin_summary(
     games = []
     for info in store.registry.list_games():
         d = info.to_public_dict()
-        if info.source == "plugin":
-            d["enabled"] = _is_plugin_enabled(plugins_dir, info.key)
-        else:
-            d["enabled"] = True
+        d["enabled"] = _is_plugin_enabled(plugins_dir, info.key)
         games.append(d)
     return {
         "games": games,
@@ -1487,19 +1491,15 @@ def _admin_html() -> str:
             }
           });
           cells.push(playBtn);
-          if (g.source === "plugin") {
-            const toggleBtn = actionBtn(g.enabled ? "Disable" : "Enable", g.enabled ? "danger" : "secondary", async () => {
-              const action = g.enabled ? "disable" : "enable";
-              toggleBtn.disabled = true;
-              const res = await api(`/api/admin/plugins/${g.key}/${action}`, { method: "POST" });
-              const data = await res.json();
-              if (res.ok && data.summary) render(data.summary);
-              else toggleBtn.disabled = false;
-            });
-            cells.push(toggleBtn);
-          } else {
-            cells.push(badge(true, "builtin", ""));
-          }
+          const toggleBtn = actionBtn(g.enabled ? "Disable" : "Enable", g.enabled ? "danger" : "secondary", async () => {
+            const action = g.enabled ? "disable" : "enable";
+            toggleBtn.disabled = true;
+            const res = await api(`/api/admin/plugins/${g.key}/${action}`, { method: "POST" });
+            const data = await res.json();
+            if (res.ok && data.summary) render(data.summary);
+            else toggleBtn.disabled = false;
+          });
+          cells.push(toggleBtn);
           return cells;
         }
       ));
