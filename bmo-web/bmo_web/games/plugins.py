@@ -34,7 +34,7 @@ class PluginDiscovery:
 
 
 def _plugin_db_path(plugins_dir: Path) -> Path:
-    return plugins_dir.parent / PLUGIN_DB_FILENAME
+    return plugins_dir / PLUGIN_DB_FILENAME
 
 
 def _load_plugin_db(plugins_dir: Path) -> dict[str, bool]:
@@ -68,8 +68,6 @@ def discover_plugins(directory: Path) -> PluginDiscovery:
     errors: list[str] = []
     for child in sorted(directory.iterdir(), key=lambda path: path.name):
         if child.name.startswith(".") or not child.is_dir():
-            continue
-        if not _is_plugin_enabled(directory, child.name):
             continue
         try:
             plugins.append(load_plugin_directory(child))
