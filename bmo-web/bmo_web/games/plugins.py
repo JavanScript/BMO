@@ -34,7 +34,7 @@ class PluginDiscovery:
 
 
 def _plugin_db_path(plugins_dir: Path) -> Path:
-    return plugins_dir / PLUGIN_DB_FILENAME
+    return plugins_dir.parent / PLUGIN_DB_FILENAME
 
 
 def _load_plugin_db(plugins_dir: Path) -> dict[str, bool]:
